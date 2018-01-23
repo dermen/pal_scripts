@@ -1,0 +1,397 @@
+#!/usr/bin/python3
+try: 
+    import Tkinter as tk
+except ImportError:
+    import tkinter as tk
+import time
+import sys
+import re
+import os
+#sys.path.append( '/home/dermen/.local/lib/python2.7/site-packages')
+#from joblib import Parallel, delayed
+import pandas
+import h5py
+import numpy as np
+import matplotlib as mpl
+mpl.use('TkAgg')
+
+import pylab as plt
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
+#plt.style.use('dark_background')
+from slide_hist import HistUpdater
+
+btnstyle = {'font': 'Helvetica 10 bold', 
+            'activebackground': 'green', 'activeforeground': 'white',
+            'relief': tk.RAISED, 'highlightcolor':'red'}  # , 'bd':5}
+labstyle = {'font': 'Helvetica 14 bold', 'bg': 'snow', 'fg': 'black',
+            'activebackground': 'green', 'activeforeground': 'white'}
+
+fr = {'bg': 'blue', }
+frpk = {'padx': 5, 'pady': 5}
+
+class ModelApp(tk.Frame):
+    def __init__(self, master, cxi_fname, image_path, peaks_path, *args, **kwargs):
+        tk.Frame.__init__(self, *args, **kwargs)
+        self.master = master
+
+        self.h5 = h5py.File(cxi_fname, 'r')
+        self.imgs = self.h5[ image_path]
+        self.peaks = self.h5[ peaks_path]
+
+        self.indices = np.arange( self.imgs.shape[0] )
+        self.counter = 0
+
+        self.npeaks = self.peaks['nPeaks'].value
+
+#       load the dataframes
+        #self.known = pandas.read_pickle(known_pkl)
+        #self.pred = pandas.read_pickle(pred_pkl)
+        #self.cell = pandas.read_pickle(cell_pkl)
+
+#       load the files, put in a dict...
+        #self.unique_fnames = self.cell.cxi_fname.unique()
+        #assert(all(f in self.unique_fnames for f in self.pred.cxi_fname.unique()))
+        #assert(all(f in self.unique_fnames for f in self.known.cxi_fname.unique()))
+        #self.hdf5_handles = {f: h5py.File(f, 'r') for f in self.unique_fnames}
+
+#       load number of shots per fname
+
+        #self._setup_image_indexing()
+
+        self._set_idx_fname_path()
+        #self._set_df()
+        self._set_image()
+        self._set_centers()
+
+#       size of figure inset...
+        self.fig = Figure(figsize=(4, 4), dpi=100)
+        self.ax = self.fig.add_subplot(111)
+        #self.fig, self.ax = plt.subplots(nrows=1,ncols=1)#Figure(figsize=(4, 4))
+        
+        self.xl = (None, None)
+        self.yl = (None, None)
+
+        self._display_frame()
+        self._buttons()
+        # self._color_scaler()
+        self._display()
+
+
+    def _set_idx_fname_path(self):
+        self.idx = self.indices[self.counter]
+        #self.fname = self.cxi_fnames[self.counter]
+        #self.path = self.dset_paths[self.counter]
+
+
+    def _set_image(self):
+        dset = self.imgs #self.hdf5_handles[self.fname][self.path]
+        #if len(dset.shape) == 2:
+            #self.img = dset.value
+        #else:
+        self.img = dset[self.idx]  # - 1]
+
+    def _set_centers(self):
+        i = self.indices[ self.counter]
+        n = int(self.npeaks[i] )
+        self.X = self.peaks['peakXPosRaw'][i][:n]
+        self.Y = self.peaks['peakYPosRaw'][i][:n]
+        self.known_centers = zip( self.Y, self.X)
+
+
+    def _display_frame(self):
+        toplvl= tk.Toplevel(self.master)
+        self.disp_frame = tk.Frame(toplvl)
+        self.disp_frame.pack(side=tk.TOP, expand=1, fill=tk.BOTH, **frpk)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.disp_frame)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1, **frpk)
+        self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.disp_frame)
+        self.toolbar.update()
+        self.canvas._tkcanvas.pack(side=tk.TOP, fill=tk.BOTH, expand=1, **frpk)
+
+    def _display(self):
+        self.m = np.median(self.img[self.img > 0])
+        # np.sqrt( sum( [ (self.m - pix)**2 for pix in self.img[ self.img > 0 ] ]) )
+        self.s = self.img[self.img > 0] .std()
+        self.i_s = 1
+        self.vmin = self.m - self.i_s * self.s
+        self.vmax = self.m + self.i_s * self.s
+        
+        if self.fix_zoom_variable.get() == 1:
+            self.xl = self.ax.get_xlim()
+            self.yl = self.ax.get_ylim()
+            print (self.xl, self.yl)
+        else:
+            self.xl = (-0.5, self.img.shape[1] - 0.5)
+            self.yl = (self.img.shape[0] - 0.5, -0.5)
+
+        # self.ax.set_title(
+        #    '%s; %s:%d, counter: %d/%d' %
+        #    (self.fname, self.path, self.idx, self.counter, len(
+        #        self.indices)))
+
+        self.ax.set_title(
+            '%s; %s:%d, \ncounter: %d/%d' %
+            ("", "", self.idx, self.counter+1, len(
+                self.indices)))
+        
+        self.ax.imshow(self.img,
+                       cmap='viridis', interpolation='nearest',
+                       vmin=self.vmin, vmax=self.vmax)
+        self.known_circs = []
+        for cent in self.known_centers:
+            circ = mpl.patches.Circle(
+                xy=(cent[1], cent[0]), radius=7, ec='r', fc='none', lw=1)
+            self.ax.add_patch(circ)
+            self.known_circs.append(circ)
+            if self.toggle_known_var.get():
+                circ.set_visible(True)
+            else:
+                circ.set_visible(False)
+
+        #self.pred_circs = []
+        #for cent in self.pred_centers:
+        #    circ = mpl.patches.Circle(
+        #        xy=(cent[1], cent[0]), radius=7, ec='w', fc='none', lw=1, ls='dashed')
+        #    self.ax.add_patch(circ)
+        #    self.pred_circs.append(circ)
+        #    if self.toggle_pred_var.get():
+        #        circ.set_visible(True)
+        #    else:
+        #        circ.set_visible(False)
+
+        self.pred_circ_visible = True
+
+        self.ax.set_xlim(self.xl)
+        self.ax.set_ylim(self.yl)
+        # self.ax.axis('tight')
+        #self.fig.canvas.draw()
+        self.canvas.draw()
+        #plt.pause(0.001)
+        #plt.pause(0.001) 
+
+    def _buttons(self):
+
+        button_frame0 = tk.Frame(self, **fr)
+        button_frame0.pack(side=tk.TOP,  **frpk)
+
+        button_frame = tk.Frame(self, **fr)
+        button_frame.pack(side=tk.TOP, **frpk)
+
+        prev_button100 = tk.Button(button_frame0,
+                                   text='-100',
+                                   command=lambda: self._prev(100), **btnstyle)
+        prev_button100.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        prev_button10 = tk.Button(button_frame0,
+                                  text='-10',
+                                  command=lambda: self._prev(10), **btnstyle)
+        prev_button10.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        prev_button1 = tk.Button(button_frame0,
+                                 text='-1',
+                                 command=lambda: self._prev(1), **btnstyle)
+        prev_button1.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+        next_button1 = tk.Button(button_frame0,
+                                 text='+1',
+                                 command=lambda: self._next(1), **btnstyle)
+        next_button1.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        next_button10 = tk.Button(button_frame0,
+                                  text='+10',
+                                  command=lambda: self._next(10), **btnstyle)
+        next_button10.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        next_button100 = tk.Button(button_frame0,
+                                   text='+100',
+                                   command=lambda: self._next(100), **btnstyle)
+        next_button100.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+        self.toggle_known_var = tk.IntVar()
+        toggle_known = tk.Checkbutton(button_frame,
+                                 text='found peaks', variable=self.toggle_known_var,
+                                 command=self._toggle_known, **btnstyle)
+        toggle_known.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+
+        self.fix_zoom_variable = tk.IntVar()
+        self.fix_zoom = tk.Checkbutton(button_frame,
+                             text='fix zoom', variable=self.fix_zoom_variable,
+                             command=self._fix_zoom, **btnstyle)
+        self.fix_zoom.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+
+
+#       these buttons will be for updating the color map
+        button_frame2 = tk.Frame(self, **fr)
+        button_frame2.pack(side=tk.TOP, **frpk)
+
+        increase = tk.Button(button_frame2,
+                             text='increase contrast',
+                             command=self._increase_contrast, **btnstyle)
+        increase.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+        decrease = tk.Button(button_frame2,
+                             text='decrease contrast',
+                             command=self._decrease_contrast, **btnstyle)
+        decrease.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+        button_frame3 = tk.Frame(self, **fr)
+        button_frame3.pack(side=tk.TOP, **frpk)
+
+
+
+
+
+    def _color_scaler(self):
+        scale_frame = tk.Frame(self, **fr)
+        scale_frame.pack(side=tk.TOP, **frpk)
+
+        self.scaler = tk.Scale(scale_frame,
+                               from_=0.001, to=10, resolution=0.1, orient=tk.HORIZONTAL,
+                               command=self._scaler)
+        self.scaler.pack(side=tk.LEFT, expand=1, fill=tk.BOTH, **frpk)
+
+    def _scaler(self, ev):
+        im = self.ax.images[0]
+        self.i_s = self.scaler.get()
+        self.vmin = self.m - self.i_s * self.s
+        self.vmax = self.m + self.i_s * self.s
+        im.set_clim(self.vmin, self.vmax)
+        self.canvas.draw()
+        #nplt.pause(0.001)
+
+
+    def _next(self, increment):
+        self.counter += increment
+        if self.counter >= len(self.indices):
+            self.counter = self.counter - increment
+            self.counter = len( self.indices)-1 #self.counter - increment
+        self._update_display()
+
+    def _prev(self, increment):
+        self.counter = self.counter - increment
+        if self.counter < 0:
+            self.counter = 0
+        self._update_display()
+
+    def _toggle_known(self):
+        #self.known_circ_visible = not self.known_circ_visible
+        known_circ_visible = self.toggle_known_var.get()
+        for circ in self.known_circs:
+            circ.set_visible(known_circ_visible)
+        self.canvas.draw()
+        #plt.pause(0.001)
+
+
+    def _fix_zoom(self):
+        if self.fix_zoom_variable.get()==1:
+            self.xl = self.ax.get_xlim()
+            self.yl = self.ax.get_ylim()
+        else:
+            self._reset_zoom()
+
+    def _reset_zoom(self):
+        self.xl = (-0.5, self.img.shape[1] - 0.5)
+        self.yl = (self.img.shape[0] - 0.5, -0.5)
+        self.ax.set_xlim(self.xl)
+        self.ax.set_ylim(self.yl)
+        self.canvas.draw()
+        #plt.pause(0.001)
+
+    def _decrease_contrast(self):
+        im = self.ax.images[0]
+        if self.i_s < 1:
+            self.i_s = self.i_s * 2
+        else:
+            self.i_s += 1
+        self.vmin = self.m - self.i_s * self.s
+        self.vmax = self.m + self.i_s * self.s
+        im.set_clim(self.vmin, self.vmax)
+        self.canvas.draw()
+        #plt.pause(0.001)
+
+    def _increase_contrast(self):
+        im = self.ax.images[0]
+
+        if self.i_s - 1 <= 0:
+            self.i_s = self.i_s * .5
+        else:
+            self.i_s = self.i_s - 1
+
+        self.vmin = self.m - self.i_s * self.s
+        self.vmax = self.m + self.i_s * self.s
+        im.set_clim(self.vmin, self.vmax)
+        #self.fig.canvas.draw()
+        #plt.pause(0.0001)
+        self.canvas.draw()
+        #plt.pause(0.001)
+
+    def _update_display(self):
+        #self.idx = self.indices[self.counter]
+        self._set_idx_fname_path()
+        #self._set_df()
+        self._set_image()
+        self._set_centers()
+        self.ax.clear()
+        self._display()
+
+
+###########################
+###########################
+###########################
+###########################
+###########################
+###########################
+###########################
+
+
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+
+
+
+if __name__ == '__main__':
+    from argparse import ArgumentParser
+    parser = ArgumentParser(
+        description='')
+    parser.add_argument(
+        '-data',
+        dest='images_path',
+        type=str,
+        default=None)
+
+    parser.add_argument(
+        '-p, --peaks-path',
+        dest='peaks_path',
+        type=str,
+        default=None)
+
+    parser.add_argument(
+        '-f, --fname',
+        dest='fname',
+        type=str,
+        default=None)
+    args = parser.parse_args()
+
+    
+    print("erer")
+
+    root = tk.Tk()
+    root.title("DDview")
+    frame = ModelApp(
+        root,
+        args.fname,
+        args.images_path,
+        args.peaks_path,
+        height=900,
+        width=700,
+        bg='snow')
+    frame.pack(fill=tk.BOTH, side=tk.TOP, expand=tk.YES)
+    #plt.draw()
+    #plt.pause(0.0001)
+    root.mainloop()
