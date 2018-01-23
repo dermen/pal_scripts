@@ -1,0 +1,797 @@
+#!/usr/local/Cellar/python/2.7.13/Frameworks/Python.framework/Versions/2.7/bin/python
+try: 
+    import Tkinter as tk
+except ImportError:
+    import tkinter as tk
+import sys
+import re
+import os
+#sys.path.append( '/home/dermen/.local/lib/python2.7/site-packages')
+from joblib import Parallel, delayed
+import pandas
+import h5py
+import numpy as np
+import matplotlib as mpl
+mpl.use('TkAgg')
+
+import pylab as plt
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
+#plt.style.use('dark_background')
+from slide_hist import HistUpdater
+
+btnstyle = {'font': 'Helvetica 10 bold', 
+            'activebackground': 'green', 'activeforeground': 'white',
+            'relief': tk.RAISED, 'highlightcolor':'red'}  # , 'bd':5}
+labstyle = {'font': 'Helvetica 14 bold', 'bg': 'snow', 'fg': 'black',
+            'activebackground': 'green', 'activeforeground': 'white'}
+
+fr = {'bg': 'blue', }
+frpk = {'padx': 5, 'pady': 5}
+
+class ModelApp(tk.Frame):
+    def __init__(self, master, known_pkl, pred_pkl, cell_pkl, *args, **kwargs):
+        tk.Frame.__init__(self, *args, **kwargs)
+        self.master = master
+
+#       load the dataframes
+        self.known = pandas.read_pickle(known_pkl)
+        self.pred = pandas.read_pickle(pred_pkl)
+        self.cell = pandas.read_pickle(cell_pkl)
+
+#       load the files, put in a dict...
+        self.unique_fnames = self.cell.cxi_fname.unique()
+        assert(all(f in self.unique_fnames for f in self.pred.cxi_fname.unique()))
+        assert(all(f in self.unique_fnames for f in self.known.cxi_fname.unique()))
+        self.hdf5_handles = {f: h5py.File(f, 'r') for f in self.unique_fnames}
+
+#       load number of shots per fname
+
+        self._setup_image_indexing()
+
+        self._set_idx_fname_path()
+        self._set_df()
+        self._set_image()
+        self._set_centers()
+
+#       size of figure inset...
+        self.fig = Figure(figsize=(4, 4), dpi=100)
+        self.ax = self.fig.add_subplot(111)
+        #self.fig, self.ax = plt.subplots(nrows=1,ncols=1)#Figure(figsize=(4, 4))
+        
+#       another figure for histogram
+        #plt.draw()
+        #plt.pause(0.00001)
+        self.fig2, self.axs = plt.subplots( nrows=2, ncols=3)
+        
+        #self.fig2 = Figure(figsize=(6, 6))
+        #self.ax1 = self.fig2.add_subplot(321)
+        #self.ax2 = self.fig2.add_subplot(322)
+        #self.ax3 = self.fig2.add_subplot(323)
+        #self.ax4 = self.fig2.add_subplot(324)
+        #self.ax5 = self.fig2.add_subplot(325)
+        #self.ax6 = self.fig2.add_subplot(326)
+        #self.axs_nrows=3
+        #self.axs_ncols=2
+        #self.axs = [ self.ax1, self.ax2, self.ax3, self.ax4, self.ax5, self.ax6]
+        #self.nbins = 200
+
+        self.xl = (None, None)
+        self.yl = (None, None)
+
+        self._display_frame()
+        self._buttons()
+        # self._color_scaler()
+        self._display()
+
+    def _setup_image_indexing(self, queries=None):
+#       load the dataframe indices
+        df = self.cell
+        if queries is not None:
+            for q in queries:
+                df = df.query(q)
+        self.indices = df.dataset_index.values
+        self.cxi_fnames = df.cxi_fname.values
+        self.dset_paths = df.dataset_path.values
+#       choose an initial pattern
+        self.counter = 0
+
+    def _set_idx_fname_path(self):
+        self.idx = self.indices[self.counter]
+        self.fname = self.cxi_fnames[self.counter]
+        self.path = self.dset_paths[self.counter]
+
+    def _set_df(self):
+        self.df_k = self.known.loc[np.logical_and(
+            self.known.dataset_index == self.idx, self.known.cxi_fname == self.fname)]
+        self.df_p = self.pred.loc[np.logical_and(
+            self.pred.dataset_index == self.idx, self.pred.cxi_fname == self.fname)]
+
+    def _set_image(self):
+        dset = self.hdf5_handles[self.fname][self.path]
+        if len(dset.shape) == 2:
+            self.img = dset.value
+        else:
+            self.img = dset[self.idx]  # - 1]
+
+    def _set_centers(self):
+        self.known_centers = zip(
+            self.df_k['ss/px'].values,
+            self.df_k['fs/px'].values)
+        self.pred_centers = zip(
+            self.df_p['ss/px'].values,
+            self.df_p['fs/px'].values)
+
+        #pred_centers = zip( df['ss/px'].values.astype(float) , df['fs/px'].values.astype(float) )
+
+    def _display_frame(self):
+        toplvl= tk.Toplevel(self.master)
+        self.disp_frame = tk.Frame(toplvl)
+        self.disp_frame.pack(side=tk.TOP, expand=1, fill=tk.BOTH, **frpk)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.disp_frame)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1, **frpk)
+        self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.disp_frame)
+        self.toolbar.update()
+        self.canvas._tkcanvas.pack(side=tk.TOP, fill=tk.BOTH, expand=1, **frpk)
+
+    def _display(self):
+        self.m = np.median(self.img[self.img > 0])
+        # np.sqrt( sum( [ (self.m - pix)**2 for pix in self.img[ self.img > 0 ] ]) )
+        self.s = self.img[self.img > 0] .std()
+        self.i_s = 1
+        self.vmin = self.m - self.i_s * self.s
+        self.vmax = self.m + self.i_s * self.s
+        
+        if self.fix_zoom_variable.get() == 1:
+            self.xl = self.ax.get_xlim()
+            self.yl = self.ax.get_ylim()
+            print self.xl, self.yl
+        else:
+            self.xl = (-0.5, self.img.shape[1] - 0.5)
+            self.yl = (self.img.shape[0] - 0.5, -0.5)
+
+        # self.ax.set_title(
+        #    '%s; %s:%d, counter: %d/%d' %
+        #    (self.fname, self.path, self.idx, self.counter, len(
+        #        self.indices)))
+
+
+        self.ax.set_title(
+            '%s; %s:%d, \ncounter: %d/%d' %
+            (self.fname, "", self.idx, self.counter+1, len(
+                self.indices)))
+        
+        self.ax.imshow(self.img,
+                       cmap='viridis', interpolation='nearest',
+                       vmin=self.vmin, vmax=self.vmax)
+        self.known_circs = []
+        for cent in self.known_centers:
+            circ = mpl.patches.Circle(
+                xy=(cent[1], cent[0]), radius=7, ec='r', fc='none', lw=1)
+            self.ax.add_patch(circ)
+            self.known_circs.append(circ)
+            if self.toggle_known_var.get():
+                circ.set_visible(True)
+            else:
+                circ.set_visible(False)
+
+        self.pred_circs = []
+        for cent in self.pred_centers:
+            circ = mpl.patches.Circle(
+                xy=(cent[1], cent[0]), radius=7, ec='w', fc='none', lw=1, ls='dashed')
+            self.ax.add_patch(circ)
+            self.pred_circs.append(circ)
+            if self.toggle_pred_var.get():
+                circ.set_visible(True)
+            else:
+                circ.set_visible(False)
+
+        self.pred_circ_visible = True
+        self.known_circ_visible = True
+
+        self.ax.set_xlim(self.xl)
+        self.ax.set_ylim(self.yl)
+        # self.ax.axis('tight')
+        #self.fig.canvas.draw()
+        self.canvas.draw()
+        #plt.pause(0.001) 
+
+    def _buttons(self):
+
+        button_frame0 = tk.Frame(self, **fr)
+        button_frame0.pack(side=tk.TOP,  **frpk)
+
+        button_frame = tk.Frame(self, **fr)
+        button_frame.pack(side=tk.TOP, **frpk)
+
+        prev_button100 = tk.Button(button_frame0,
+                                   text='-100',
+                                   command=lambda: self._prev(100), **btnstyle)
+        prev_button100.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        prev_button10 = tk.Button(button_frame0,
+                                  text='-10',
+                                  command=lambda: self._prev(10), **btnstyle)
+        prev_button10.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        prev_button1 = tk.Button(button_frame0,
+                                 text='-1',
+                                 command=lambda: self._prev(1), **btnstyle)
+        prev_button1.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+        next_button1 = tk.Button(button_frame0,
+                                 text='+1',
+                                 command=lambda: self._next(1), **btnstyle)
+        next_button1.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        next_button10 = tk.Button(button_frame0,
+                                  text='+10',
+                                  command=lambda: self._next(10), **btnstyle)
+        next_button10.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        next_button100 = tk.Button(button_frame0,
+                                   text='+100',
+                                   command=lambda: self._next(100), **btnstyle)
+        next_button100.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+        self.toggle_known_var = tk.IntVar()
+        toggle_known = tk.Checkbutton(button_frame,
+                                 text='found peaks', variable=self.toggle_known_var,
+                                 command=self._toggle_known, **btnstyle)
+        toggle_known.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+        self.toggle_pred_var = tk.IntVar()
+        toggle_pred = tk.Checkbutton(button_frame,
+                                text='predicted peaks',variable=self.toggle_pred_var,
+                                command=self._toggle_pred, **btnstyle)
+        toggle_pred.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+        self.fix_zoom_variable = tk.IntVar()
+        self.fix_zoom = tk.Checkbutton(button_frame,
+                             text='fix zoom', variable=self.fix_zoom_variable,
+                             command=self._fix_zoom, **btnstyle)
+        self.fix_zoom.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+
+
+#       these buttons will be for updating the color map
+        button_frame2 = tk.Frame(self, **fr)
+        button_frame2.pack(side=tk.TOP, **frpk)
+
+        increase = tk.Button(button_frame2,
+                             text='increase contrast',
+                             command=self._increase_contrast, **btnstyle)
+        increase.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+        decrease = tk.Button(button_frame2,
+                             text='decrease contrast',
+                             command=self._decrease_contrast, **btnstyle)
+        decrease.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+        button_frame3 = tk.Frame(self, **fr)
+        button_frame3.pack(side=tk.TOP, **frpk)
+
+        show_units = tk.Button(button_frame3,
+                               text='Show unit cells',
+                               command=self._show_unit_cells, **btnstyle)
+        show_units.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        
+        filter_units = tk.Button(button_frame3,
+                               text='Filter unit cells',
+                               command=self._filter_unit_cells, **btnstyle)
+        filter_units.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+    def _filter_unit_cells(self):
+        queries = []
+        for name, hu in self.histupdaters.iteritems():
+            query = "%.4f <= %s <= %.4f"%(hu.minval, name, hu.maxval)
+            queries.append(query)
+            print(query)
+        self._setup_image_indexing(queries=queries)
+        self._update_display()
+
+
+
+    def _show_unit_cells(self):
+        self._plot_unit_hists()
+
+
+    def _show_unit_cells2(self):
+        uframe = tk.Toplevel(self)
+        self.disp_frame2 = tk.Frame(uframe, **fr)
+        self.disp_frame2.pack(side=tk.TOP, expand=1, fill=tk.BOTH, **frpk)
+        self.canvas2 = FigureCanvasTkAgg(self.fig2, master=self.disp_frame2)
+        self.canvas2.get_tk_widget().pack(side=tk.LEFT, fill=tk.BOTH, expand=1, **frpk)
+        self.toolbar = NavigationToolbar2TkAgg(self.canvas2, self.disp_frame2)
+        self.toolbar.update()
+        self.canvas2._tkcanvas.pack(
+            side=tk.TOP, fill=tk.BOTH, expand=1, **frpk)
+        self._plot_unit_hists()
+
+        update_ucel_fr = tk.Frame(uframe, **fr)
+
+    def _plot_unit_hists(self):
+        root = tk.Toplevel(self)
+        
+        labels = ['a','b','c','alpha','beta','gamma']
+        colors = ['blue']*3 + ['red']*3
+        DAT = [self.cell.a, self.cell.b, self.cell.c,
+            self.cell.alpha, self.cell.beta, self.cell.gamma]
+        nrows = self.axs.shape[0]
+        ncols = self.axs.shape[1]
+        #nrows = self.axs_nrows
+        #ncols = self.axs_ncols
+        i_ax = 0
+        self.histupdaters = {}
+        for i_row in xrange( nrows):
+            for i_col in xrange( ncols):
+                #ax = self.axs[ i_ax ] # i_row, i_col]
+                ax = self.axs[ i_row, i_col]
+                label = labels[ i_ax]
+                dat = DAT[i_ax][::10]
+                color = colors[i_ax]
+                i_ax +=1
+                histupdater = HistUpdater(root, dat, self.fig2, ax, 
+                    color=color, label=label)
+                histupdater.pack(fill='both', expand=True)
+                self.histupdaters[label] = histupdater
+        plt.draw()
+        plt.pause(0.0001)
+    
+    
+    def _plot_unit_hists2(self):
+        a, bn1 = np.histogram(self.cell.a, bins=self.nbins)
+        b, bn2 = np.histogram(self.cell.b, bins=self.nbins)
+        c, bn3 = np.histogram(self.cell.c, bins=self.nbins)
+        alpha, bn4 = np.histogram(self.cell.alpha, bins=self.nbins)
+        beta, bn5 = np.histogram(self.cell.beta, bins=self.nbins)
+        gamma, bn6 = np.histogram(self.cell.gamma, bins=self.nbins)
+
+        self.ax1.bar(bn1[:-1], a, bn1[1] - bn1[0])
+        self.ax1.set_title('a', y=.99)
+        self.ax3.bar(bn2[:-1], b, bn2[1] - bn2[0])
+        self.ax3.set_title('b', y=.99)
+        self.ax5.bar(bn3[:-1], c, bn3[1] - bn3[0])
+        self.ax5.set_title('c', y=.99)
+        self.ax2.bar(bn4[:-1], alpha, bn4[1] - bn4[0])
+        self.ax2.set_title(r'$\alpha$', y=.99)
+        self.ax4.bar(bn5[:-1], beta, bn5[1] - bn5[0])
+        self.ax4.set_title(r'$\beta$', y=.99)
+        self.ax6.bar(bn6[:-1], gamma, bn6[1] - bn6[0])
+        self.ax6.set_title(r'$\gamma$', y=.99)
+        self.fig2.subplots_adjust(wspace=.35, hspace=.35)
+        self.canvas2.draw()
+        plt.pause(0.0001)
+
+    def _color_scaler(self):
+        scale_frame = tk.Frame(self, **fr)
+        scale_frame.pack(side=tk.TOP, **frpk)
+
+        self.scaler = tk.Scale(scale_frame,
+                               from_=0.001, to=10, resolution=0.1, orient=tk.HORIZONTAL,
+                               command=self._scaler)
+        self.scaler.pack(side=tk.LEFT, expand=1, fill=tk.BOTH, **frpk)
+
+    def _scaler(self, ev):
+        im = self.ax.images[0]
+        self.i_s = self.scaler.get()
+        self.vmin = self.m - self.i_s * self.s
+        self.vmax = self.m + self.i_s * self.s
+        im.set_clim(self.vmin, self.vmax)
+        self.canvas.draw()
+
+
+    def _next(self, increment):
+        self.counter += increment
+        if self.counter >= len(self.indices):
+            self.counter = self.counter - increment
+            self.counter = len( self.indices)-1 #self.counter - increment
+        self._update_display()
+
+    def _prev(self, increment):
+        self.counter = self.counter - increment
+        if self.counter < 0:
+            self.counter = 0
+        self._update_display()
+
+    def _toggle_known(self):
+        #self.known_circ_visible = not self.known_circ_visible
+        known_circ_visible = self.toggle_known_var.get()
+        for circ in self.known_circs:
+            circ.set_visible(known_circ_visible)
+        self.canvas.draw()
+
+    def _toggle_pred(self):
+        #self.pred_circ_visible = not self.pred_circ_visible
+        pred_circ_visible = self.toggle_pred_var.get()
+        for circ in self.pred_circs:
+            circ.set_visible(pred_circ_visible)
+        self.canvas.draw()
+
+    def _fix_zoom(self):
+        if self.fix_zoom_variable.get()==1:
+            self.xl = self.ax.get_xlim()
+            self.yl = self.ax.get_ylim()
+        else:
+            self._reset_zoom()
+
+    def _reset_zoom(self):
+        self.xl = (-0.5, self.img.shape[1] - 0.5)
+        self.yl = (self.img.shape[0] - 0.5, -0.5)
+        self.ax.set_xlim(self.xl)
+        self.ax.set_ylim(self.yl)
+        self.canvas.draw()
+
+    def _decrease_contrast(self):
+        im = self.ax.images[0]
+        if self.i_s < 1:
+            self.i_s = self.i_s * 2
+        else:
+            self.i_s += 1
+        self.vmin = self.m - self.i_s * self.s
+        self.vmax = self.m + self.i_s * self.s
+        im.set_clim(self.vmin, self.vmax)
+        self.canvas.draw()
+
+    def _increase_contrast(self):
+        im = self.ax.images[0]
+
+        if self.i_s - 1 <= 0:
+            self.i_s = self.i_s * .5
+        else:
+            self.i_s = self.i_s - 1
+
+        self.vmin = self.m - self.i_s * self.s
+        self.vmax = self.m + self.i_s * self.s
+        im.set_clim(self.vmin, self.vmax)
+        #self.fig.canvas.draw()
+        #plt.pause(0.0001)
+        self.canvas.draw()
+
+    def _update_display(self):
+        #self.idx = self.indices[self.counter]
+        self._set_idx_fname_path()
+        self._set_df()
+        self._set_image()
+        self._set_centers()
+        self.ax.clear()
+        self._display()
+
+
+###########################
+###########################
+###########################
+###########################
+###########################
+###########################
+###########################
+
+
+
+def sub_main( patts, jobID, stream_dir, dataset_path):
+    pred_pk_cols = ['h',
+     'k',
+     'l',
+     'I',
+     'sigma(I)',
+     'peak',
+     'background',
+     'fs/px',
+     'ss/px',
+     'panel']
+    known_pk_cols = ['fs/px','ss/px','(1/d)/nm^-1','Intensity' ,'Panel']
+    split_line = lambda x: x.strip().split()
+
+#   containers for dataframes
+    all_known = [] # known or detecred peak dataframes`
+    all_pred = [] # predicted peak dataframes
+    all_cell = []
+    
+    for i_patt,patt in enumerate(patts):
+        if i_patt%50==0:
+            print ("Job %d --- Processing  patterns %d/%d"%(jobID, i_patt+1, len(patts)))
+
+#   get the data for the predicted peaks
+        s1 = 'Peaks from peak search'
+        s2 = 'End of peak list'
+        pk_dat =  map( split_line, patt.split(s1)[1].split(s2)[0].strip().split('\n') )[1:]
+        known_pk_df = pandas.DataFrame.from_records(pk_dat, columns=known_pk_cols)
+
+#   get the cxi filename and dataset index
+        fname = os.path.join( stream_dir, patt.split('Image filename: ')[1].split('\n')[0].strip() ) 
+        assert( os.path.exists(fname) )
+        try:
+            dataset_idx = int( patt.split('Event: //')[1].split('\n')[0].strip() ) 
+        except IndexError:
+            dataset_idx = 0
+#   make cols float where approrpriate... 
+        for col in known_pk_cols[:-1]: # every col except panel col (which is a string... ) 
+            known_pk_df[col] = known_pk_df[col].values.astype(float)
+       
+#   add image location info...
+        known_pk_df['cxi_fname'] =  fname
+        known_pk_df['dataset_index'] =   dataset_idx
+        known_pk_df['dataset_path'] = dataset_path
+
+        assert( dataset_path in h5py.File(fname, 'r'))
+
+#   append the known peak dataframe for this pattern... 
+        all_known.append( known_pk_df ) 
+
+############################
+
+#   now check for crystals inside the pattern
+        if not 'Begin crystal' in patt and not 'End crystal' in patt:
+            continue
+        
+#   this is gross but it does the trick... 
+        xtals = [ map( split_line, \
+            ss.split('End crystal')[0].split('\n')[16:-2])
+            for ss in  patt.split('Begin crystal')[1:] ]
+
+
+        xtal_cells = [  
+            ss.split('End crystal')[0].split('\n')[1:13] #[:16-2]
+            for ss in  patt.split('Begin crystal')[1:]   ]
+
+
+        cell_data = {'a':[], 'b':[], 'c':[], 'alpha':[], 'beta':[], 'gamma':[] , 'dataset_index':[],
+            'cxi_fname':[], 'dataset_path':[], 
+            'astar1':[],'astar2':[], 'astar3':[], 
+            'bstar1':[],'bstar2':[], 'bstar3':[], 
+            'cstar1':[],'cstar2':[], 'cstar3':[], 
+            'lattice_type':[], 'centering':[], 'diffraction_resolution_limit':[]}
+        for cell_lines in xtal_cells:
+            cell = cell_lines[0].split()
+#           cell_lines[0] --> 'Cell parameters 14.29725 23.52881 31.38764 nm, 91.11937 90.26797 89.47856 deg'
+            cell_data['a'].append( float( cell[2]) * 10 )
+            cell_data['b'].append(  float( cell[3]) * 10 ) 
+            cell_data['c'].append(  float( cell[4]) * 10 )
+            cell_data['alpha'] .append(  float( cell[6]) )
+            cell_data['beta'] .append(  float( cell[7])  )
+            cell_data['gamma'] .append(  float( cell[8]) )
+            cell_data['dataset_index'] .append( dataset_idx )
+            cell_data['cxi_fname'] .append( fname)
+            cell_data['dataset_path'] .append(  dataset_path)
+            
+            astar = cell_lines[1].split()[2:5]
+            bstar = cell_lines[2].split()[2:5]
+            cstar = cell_lines[3].split()[2:5]
+            astar1, astar2,astar3 = map( lambda x: float(x)*.1, astar )
+            bstar1, bstar2,bstar3 = map( lambda x: float(x)*.1, bstar )
+            cstar1, cstar2,cstar3 = map( lambda x: float(x)*.1, cstar )
+            cell_data['astar1'].append(astar1)
+            cell_data['astar2'].append(astar2)
+            cell_data['astar3'].append(astar3)
+            cell_data['bstar1'].append(bstar1)
+            cell_data['bstar2'].append(bstar2)
+            cell_data['bstar3'].append(bstar3)
+            cell_data['cstar1'].append(cstar1)
+            cell_data['cstar2'].append(cstar2)
+            cell_data['cstar3'].append(cstar3)
+
+            lattice = cell_lines[4].split('=')[1].strip()
+            cell_data['lattice_type'].append( lattice)
+            
+            centering = cell_lines[5].split('=')[1].strip()
+            cell_data['centering'].append( centering)
+            
+            res = float( cell_lines[9].split('or')[1].strip().split()[0] )
+            cell_data['diffraction_resolution_limit'].append( res)
+    
+        all_cell.append(  pandas.DataFrame( data=cell_data ))
+
+            
+#   go through each xtal, make it a dataframe, label the xtal ID
+        pred_pk_dfs = []
+        for i_xtal,xtal in enumerate( xtals):
+            xtal = [  _row for _row in xtal if float(_row[3]) > 0  ]
+            df = pandas.DataFrame.from_records( xtal,  columns =pred_pk_cols )
+            df['xtal ID'] = i_xtal
+            pred_pk_dfs.append( df) 
+      
+
+#   concatenate the dataframes into 1
+        pred_pk_df = pandas.concat(pred_pk_dfs)
+
+#   make columns float when appropriate
+        for col in pred_pk_cols[:-1]:# every col except panel col (which is a string... ) 
+            pred_pk_df[col] = pred_pk_df[col].values.astype(float)
+        
+#   remove predikshins where intensity is <= 0
+        pred_pk_df = pred_pk_df[ pred_pk_df.I > 0]
+
+#   add the image location info
+        pred_pk_df['cxi_fname'] = fname
+        pred_pk_df['dataset_index'] = dataset_idx
+        pred_pk_df['dataset_path'] = dataset_path
+
+        all_pred.append( pred_pk_df )
+
+    print("here")
+    return all_known, all_pred, all_cell
+
+
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+#!~~~~~~~~~~~~~~~~
+
+
+def pickle_stream(stream_file, n_jobs):
+###
+# CONVERT A CRYSTFEL STREAM FILE
+# INTO DATA TABLES SO THAT
+# THE DATA CAN BE EASILY MANIPULATED
+# AND ANALYZED
+
+# usage: python pickleStream.py myfile.stream
+#future usage: python pickleStream.py listofstreamfiles -p myoutputprefix
+
+#  2 TABLES ARE MADE, A DATATABLE OF KNOWN PEAKS, AND A DATA TABLE OF PREDICTED PEAKS
+
+# CURRENTLY ONLY WORKS ON INVADER-DERMEN STYLE STREAM FILES (SINGLE PANEL, ASS IMAGES)
+
+# FUTURE MODIFICATIONS INCLUDE ABILITY TO MERGE MULTIPLE STREAM FILES... SHOULD BE
+# IMMEDIATE , JUST 
+# >> KNOWN_PKS_df = PANDAS.CONCAT([KNOWN_PKS_1_df, KNOWN_PKS_2_df, ...])
+
+# ~~~~~~~~~~~~~~~~~~
+# Globals
+
+    remove_zero_intens = True
+
+# dummie function used below
+    split_line = lambda x: x.strip().split()
+
+# in the stream file, these are the columns corresponding to the predicted peaks... 
+# ugly text files
+    pred_pk_cols = ['h',
+     'k',
+     'l',
+     'I',
+     'sigma(I)',
+     'peak',
+     'background',
+     'fs/px',
+     'ss/px',
+     'panel']
+# and the columns for found peaks... 
+    known_pk_cols = ['fs/px','ss/px','(1/d)/nm^-1','Intensity' ,'Panel']
+
+#~~~~~~~~~~~~~~~~~~~~~
+
+# pass stream file as an arg.. 
+    prefix = os.path.splitext(stream_file)[0]
+
+# load the stream file contents
+    print("Reading the stream file %s"%stream_file)
+    
+    stream_str = open(stream_file, 'r').read() # stream file
+    
+    stream_dir = os.path.abspath( os.path.dirname(stream_file) )
+
+# ~~~~~~~~~~~~~~~~~~~~~~~
+# parse the geometry section of the stream file
+    s1 = 'Begin geometry file'
+    s2 = 'End geometry file'
+    geom = re.search('Begin geometry(.*)End geometry', stream_str, flags=re.DOTALL).group(1).split('\n')
+
+#~ find all paths that would lead to a dataset... then ensure only one is found because not compatible with multiple paths currently..  
+    found_paths = []
+    for line in geom:
+        if 'data = ' in line:
+            if line[0] == ';':
+                continue
+            found_paths.append( line.split('=')[-1].strip() )
+    assert( len( found_paths) == 1 ) 
+    dataset_path = found_paths[0]
+    print(dataset_path)
+# ~~~~~~~~~~
+
+
+
+
+
+# split the stream file into the patterns( hits) (each diffraction pattern hit is called a chunk in stream file)
+    patts = [ sub_str.split('End chunk')[0] \
+        for sub_str in  stream_str.split('Begin chunk')[1:] ]  
+
+    patts_per_job = np.array_split( patts, n_jobs)
+
+    results = Parallel(n_jobs=n_jobs)(delayed(sub_main)(ppj, jid, stream_dir, dataset_path) for jid, ppj in enumerate( patts_per_job) )
+
+
+    all_known = []
+    all_pred = []
+    all_cell = []
+    for r in results:
+        if r[0]:
+            all_known += r[0]
+        if r[1]:
+            all_pred += r[1]
+
+        if r[2]:
+            all_cell += r[2]
+
+    assert( all_pred and all_known and all_cell)
+
+    print("Combining data 1/3...")
+    all_known = pandas.concat( all_known)
+    print("Combining data 2/3...")
+    all_pred = pandas.concat( all_pred)
+    print("Combining data 3/3...")
+    all_cell = pandas.concat( all_cell)
+
+    print("Saving 1/3... ")
+    all_pred.to_pickle('%s.pred.pkl'%prefix)
+    print("Saving 2/3... ")
+    all_known.to_pickle('%s.known.pkl'%prefix)
+    print("Saving 2/3... ")
+    all_cell.to_pickle('%s.cell.pkl'%prefix)
+
+    print("Saved 3 new pandas.dataframe  pickle files: \n\t%s.pred.pkl \n\t%s.known.pkl \n\t %s.cell.pkl"%(prefix, prefix, prefix))
+
+    return "%s.pred.pkl"%prefix, "%s.known.pkl"%prefix, "%s.cell.pkl"%prefix
+
+if __name__ == '__main__':
+    from argparse import ArgumentParser
+    parser = ArgumentParser(
+        description='')
+    parser.add_argument(
+        '-pre',
+        dest='prefix',
+        type=str,
+        default=None)
+    parser.add_argument(
+        '-k, --known-peaks',
+        dest='known_name',
+        type=str,
+        default=None)
+    parser.add_argument(
+        '-p, --predicted-peaks',
+        dest='pred_name',
+        type=str,
+        default=None)
+    parser.add_argument('-c, --cell', dest='cell_name', type=str, default=None)
+    parser.add_argument('-s, --stream-file', dest='stream_name', type=str, default=None)
+    parser.add_argument('-j, --num-jobs', dest='n_jobs', type=int, default=2)
+    args = parser.parse_args()
+
+    print(args.n_jobs, args.stream_name)
+    if args.stream_name is not None:
+        print("Pickling the stream!")
+        pred, known, cell = pickle_stream(args.stream_name, args.n_jobs)
+    elif args.prefix is not None:
+        known = args.prefix + ".known.pkl"
+        pred = args.prefix + ".pred.pkl"
+        cell = args.prefix + ".cell.pkl"
+    else:
+        assert( args.known_name is not None)
+        assert( args.pred_name is not None)
+        assert( args.cell_name is not None)
+
+        known = args.known_name
+        pred = args.pred_name
+        cell = args.cell_name
+   
+    print("erer")
+
+    root = tk.Tk()
+    root.title("view stream")
+    frame = ModelApp(
+        root,
+        known,
+        pred,
+        cell,
+        height=900,
+        width=700,
+        bg='snow')
+    frame.pack(fill=tk.BOTH, side=tk.TOP, expand=tk.YES)
+    #plt.draw()
+    #plt.pause(0.0001)
+    root.mainloop()
