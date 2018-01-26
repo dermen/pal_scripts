@@ -1,4 +1,5 @@
 import h5py
+from skimage import measure 
 import glob 
 from joblib import Parallel, delayed
 import numpy as np
@@ -10,10 +11,9 @@ from scipy.ndimage import measurements
 from scipy.spatial import cKDTree
 
 
-def plot_pks( img, pk=None, sig_G=1, thresh=1, make_sparse=True, nsigs=7., ret_pks=True):
+def plot_pks( img, pk=None, **kwargs):
     if pk is None:
-        pk,pk_I = pk_pos( img, sig_G=sig_G, 
-            thresh=thresh, make_sparse=make_sparse, nsigs=nsigs)
+        pk,pk_I = pk_pos( img, **kwargs)
     m = img[ img > 0].mean()
     s = img[img > 0].std()
     imshow( img, vmax=m+5*s, vmin=m-s, cmap='viridis', aspect='equal', interpolation='nearest')
@@ -21,8 +21,6 @@ def plot_pks( img, pk=None, sig_G=1, thresh=1, make_sparse=True, nsigs=7., ret_p
     for cent in pk:
         circ = plt.Circle(xy=(cent[1], cent[0]), radius=3, ec='r', fc='none',lw=1)
         ax.add_patch(circ)
-    if ret_pks:
-        return pk, pk_I
 
 
 def detect_peaks(image):
@@ -56,9 +54,10 @@ def detect_peaks(image):
 
     return detected_peaks
 
-def pk_pos( img_, make_sparse=False, nsigs=7, sig_G=None, thresh=1):
+def pk_pos( img_, make_sparse=False, nsigs=7, sig_G=None, thresh=1, sz=4, min_snr=2., 
+    min_conn=2, filt=False):
     if make_sparse:
-        img = img_.copy()
+        img = img_[sz:-sz,sz:-sz].copy()
         m = img[ img > 0].mean()
         s = img[ img > 0].std()
         img[ img < m + nsigs*s] = 0
@@ -70,14 +69,42 @@ def pk_pos( img_, make_sparse=False, nsigs=7, sig_G=None, thresh=1):
         pos =  [ p for p in pos if img[ p[0], p[1] ] > thresh]
         intens = [ img[ p[0], p[1]] for p in pos ] 
     else:
+        img = img_[sz:-sz,sz:-sz].copy()
         if sig_G is not None:
-            lab_img, nlab = measurements.label(detect_peaks(gaussian_filter(img_,sig_G)))
+            lab_img, nlab = measurements.label(detect_peaks(gaussian_filter(img,sig_G)))
         else:
-            lab_img, nlab = measurements.label(detect_peaks(img_))
+            lab_img, nlab = measurements.label(detect_peaks(img))
         locs = measurements.find_objects(lab_img)
         pos = [ ( int((y.start + y.stop) /2.), int((x.start+x.stop)/2.)) for y,x in locs ]
-        pos =  [ p for p in pos if img_[ p[0], p[1] ] > thresh]
-        intens = [ img_[ p[0], p[1]] for p in pos ] 
+        pos =  [ p for p in pos if img[ p[0], p[1] ] > thresh]
+        intens = [ img[ p[0], p[1]] for p in pos ] 
+    pos = np.array(pos)+sz
+    
+    if filt:
+        new_pos = []
+        new_intens =  []
+        for (j,i),I in zip(pos, intens):
+            im = img_[j-sz:j+sz,i-sz:i+sz]
+            pts = im[ im > 0].ravel()
+            bg = np.median( pts )
+            if bg == 0:
+                continue
+            noise = np.std( pts-bg)
+            #noise = np.median( np.sqrt(np.mean( (pts-bg)**2) ) )
+            
+            if I/bg < min_snr:
+                continue
+
+            im_n = im / noise
+            blob = measure.label(im_n > min_snr)
+            lab = blob[ sz, sz ]
+            connectivity = np.sum( blob == lab)
+            if connectivity < min_conn:
+                continue
+            new_pos.append( (j,i))
+            new_intens.append( I)
+        pos = new_pos
+        intens = new_intens
     return pos, intens
 
 
