@@ -111,17 +111,18 @@ def make_cxi_file( hits, outname, Hsh,
     dtype=np.float32, 
     compression=None, 
     comp_opts=None, shuffle=False, thresh=1, sig_G=1, 
-    make_sparse=1, nsigs=2, min_num_pks = 0):
+    make_sparse=1, nsigs=2, min_num_pks=0):
     all_pk = []
     all_pk_intens = []
     if mask is None:
         mask = np.ones(Hsh).astype(bool)
     with h5py.File( outname, "w") as out:
         #img_dset = out.create_dataset("images", 
-        img_dset = out.create_dataset('images', 
-            shape=(0,Hsh[0], Hsh[1]),
+        img_dset = out.create_dataset('data', 
+            shape=(100000,Hsh[0], Hsh[1]),
             maxshape=(None,Hsh[0], Hsh[1] ), 
-            dtype=dtype, 
+            dtype=dtype,
+            chunks=(1,Hsh[0], Hsh[1]),
             compression=compression, 
             compression_opts=comp_opts,
             shuffle=shuffle)
@@ -140,9 +141,9 @@ def make_cxi_file( hits, outname, Hsh,
             all_pk_intens.append( pk_I)
 
             count += 1
-            img_dset.resize( (count, Hsh[0], Hsh[1]),)
+            #img_dset.resize( (count, Hsh[0], Hsh[1]),)
             img_dset[count-1] = h
-
+        img_dset.resize( (count, Hsh[0], Hsh[1]))
         npeaks = [len(p) for p in all_pk]
         max_n = max(npeaks)
         pk_x = np.zeros((len(all_pk), max_n))
@@ -176,10 +177,10 @@ def blocks(img, N):
     sub_imgs = []
     M = int( float(img.shape[0]) / N ) 
     y= 0
-    for j in xrange( M):
+    for j in range( M):
         slab = img[y:y+N]
         x = 0
-        for i in xrange(M):
+        for i in range(M):
             sub_imgs.append(slab[:,x:x+N] ) 
             x += N
         y += N
@@ -211,6 +212,7 @@ def make_2dcorr(img=None,  nsigs=4, sig_G=1.1, thresh=1,
     C = np.mean( [correlate2d(T,T, mode) for T in temp_s ], axis=0 ) 
     C[ C==C.max()] = 0 # mask self correlation
     return C
+
 
 
 
