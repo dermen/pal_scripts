@@ -6,6 +6,7 @@ import h5py
 
 
 # load some images
+"""
 imgs = np.load('streak_igms_PINK.h5py.npy' )
 x,y,I = np.load('streak_peaks_PINK.h5py.npy')
 inds = [46, 49, 50, 53]
@@ -47,7 +48,7 @@ paths = [ mpl.path.Path(v)
     return np.logical_not(mask)
 
 fig, ax = plt.subplots( 1,2, figsize=(12,12))
-
+"""
 
 
 
@@ -92,7 +93,7 @@ subs = make_sub_imgs( imgs[0], pk, 10 )
 
 nrows=6
 ncols=7
-fig,axs = subplots(nrows=nrows, ncols=ncols)
+fig,axs = plt.subplots(nrows=nrows, ncols=ncols)
 k = 0
 for row in xrange(nrows):
     for col in xrange( ncols):
@@ -114,10 +115,10 @@ for row in xrange(nrows):
         if edges:
             verts = [ np.vstack(( edge['x'], edge['y'])).T 
                 for edge in edges]
-            paths = [ mpl.path.Path(v) 
+            paths = [ plt.mpl.path.Path(v) 
                 for v in verts ]
             for p in  paths:
-                patch = mpl.patches.PathPatch(p, facecolor='none', lw=2, edgecolor='Deeppink')
+                patch = plt.mpl.patches.PathPatch(p, facecolor='none', lw=2, edgecolor='Deeppink')
                 ax.add_patch(patch)
 
 #       smoothed version
@@ -132,10 +133,10 @@ for row in xrange(nrows):
         if edges:
             verts = [ np.vstack(( edge['x'], edge['y'])).T 
                 for edge in edges]
-            paths = [ mpl.path.Path(v) 
+            paths = [ plt.mpl.path.Path(v) 
                 for v in verts ]
             for p in  paths:
-                patch = mpl.patches.PathPatch(p, facecolor='none', lw=2, edgecolor='w')
+                patch = plt.mpl.patches.PathPatch(p, facecolor='none', lw=2, edgecolor='w')
                 ax.add_patch(patch)
 
         ax.set_xticks([])
@@ -143,4 +144,4 @@ for row in xrange(nrows):
         k+=1
 
 
-
+plt.show()
