@@ -1,0 +1,218 @@
+#!/usr/bin/python3
+import os
+import pylab as plt
+import h5py
+import numpy as np
+import sys
+from find_peaks import make_cxi_file2
+import glob
+from argparse import ArgumentParser
+sys.path.append('/xfel/ffhs/dat/ue_180124/.asu_tools/lib/python')
+from joblib import Parallel, delayed
+
+parser = ArgumentParser(
+    description='')
+
+parser.add_argument(
+    '-r1',
+    dest='run1',
+    type=int,
+    default=None, help="run number1")
+
+parser.add_argument(
+    '-r2',
+    dest='run2',
+    type=int,
+    default=None, help="run number2")
+
+parser.add_argument(
+    '-j',
+    dest='num_jobs',
+    type=int,
+    default=None, help="number of jobs to use")
+
+parser.add_argument(
+    '-o, --output-dir',
+    dest='outdir',
+    type=str,
+    default=None, help="where to store output files, defaults to results")
+
+parser.add_argument(
+    '-t',
+    dest='tag',
+    type=str,
+    default='noname',help="a tag appended to output filename, \
+        used to describe the run, e.g. ps2" )
+
+parser.add_argument(
+    '-X', '--fast-scan',
+    dest='X',
+    type=int,
+    default=1440, help='image fast-scan dimension')
+
+parser.add_argument(
+    '-Y', '--slow-scan',
+    dest='Y',
+    type=int,
+    default=1440, help='image slow-scan dimension')
+
+parser.add_argument(
+    '--gauss-variance',
+    dest='sig_G',
+    type=float,
+    default=1.1, help='Blurring variance (in pixel units) used to blur and iimage prior to peak detection')
+
+parser.add_argument(
+    '--num-sigmas',
+    dest='nsigs',
+    type=float,
+    default=4, help='Makes pixels 0 if there value is below this many standard deviations from the mean of the entire image')
+
+parser.add_argument(
+    '--min-dist',
+    dest='min_dist',
+    type=float,
+    default=None, help='peaks too close will be analyzed, highest intrensity one will be selected')
+parser.add_argument(
+    '--thresh-val',
+    dest='thresh',
+    type=float,
+    default=1, help='only pick a peak if its max intensity is above this value')
+parser.add_argument(
+    '--min-peaks',
+    dest='min_num_pks',
+    type=float,
+    default=10, help='minimum number of peaks for an image to be considered a hit')
+
+# filter extra
+parser.add_argument(
+    '--min-conn',
+    dest='min_conn',
+    type=int,
+    default=3, help='minimum number of conneted pixels per peak') 
+parser.add_argument(
+    '--max-conn',
+    dest='max_conn',
+    type=int,
+    default=18, help='maximum number of conneted pixels per peak') 
+parser.add_argument(
+    '--sz',
+    dest='sz',
+    type=int,
+    default=4, help='size of the neighborhood when checking peaks')
+parser.add_argument(
+    '--min-snr',
+    dest='min_snr',
+    type=float,
+    default=2., help='minimum SNR of a peak (uses medians)')
+parser.add_argument(
+    '--filter-peaks',
+    dest='filt',
+    action='store_true',
+    help='whether to filter peaks by SNR and connectivity')
+
+
+
+args = parser.parse_args()
+
+if args.outdir is None:
+    outdir = "/xfel/ffhs/dat/ue_180124/results/multi_dump"
+else:
+    outdir = args.outdir
+    if not os.path.exists(outdir):
+        print("Dir %s does not exists for writing"%outdir)
+
+r1 = args.run1
+r2 = args.run2
+fnames = []
+out_fnames = []
+for run in range( r1, r2+1):
+    run_s = str(run).zfill(7)
+    rundir = "/xfel/ffhs/dat/ue_180124/raw_data/%s/*.h5"%( run_s)
+    fnames += glob.glob(rundir)
+    out_fnames.append("/xfel/ffhs/dat/ue_180124/results/run%d_HITS.cxi"%run)
+
+#mask = h5py.File('/xfel/ffhs/dat/ue_180124/masks/badpix_mask_Jan23_PM_from_sigma.h5','r')['data'].value
+mask = np.load('/xfel/ffhs/dat/ue_180124/masks/maskallthree.npy')
+
+print("loading fnames")
+print (fnames)
+
+# setup display window
+dims = {1:[1,1], 2:[1,2],3:[1,3], 4:[2,2],
+    5:[2,3], 6: [2,3], 7:[2,4], 8:[3,3], 9:[3,3], 
+    10:[3,4], 11:[3,4], 12:[3,4], 13:[4,4], 
+    14:[4,4], 15:[3,5],16:[4,4] }
+
+
+n = args.num_jobs
+nrows = dims[n][0]
+ncols = dims[n][1]
+fig,axs = plt.subplots(nrows=nrows, ncols=ncols, figsize=(30,30))
+AX = {}
+jid = 0
+for i in range( nrows):
+    for j in range(ncols):
+        AX[jid] = axs[i][j] 
+        if jid < args.num_jobs:
+            AX[jid].set_title("Job %d"%jid)
+        else:
+            AX[jid].set_title("null")
+        AX[jid].axis('off')
+        AX[jid].imshow( np.zeros( (1440,1440)), cmap='viridis', aspect='equal')
+        jid += 1
+plt.draw()
+plt.pause(0.001)
+plt.subplots_adjust(wspace=0.02, hspace=0.02)
+
+def main(fname,outname, keys_, jid):
+    #fig = plt.figure(jid+1)
+    #ax = plt.Axes( fig, [0.,0.,1.,1.])
+    #ax.set_axis_off()
+    #fig.add_axes(ax)
+    #ax.imshow( np.zeros( (1440,1440)), cmap='viridis')
+    #plt.draw()
+    #plt.pause(0.001)
+    ax = AX[jid]
+    outname = outname.replace(".cxi", "_job%d_%s.cxi"%(jid,args.tag)  )
+    make_cxi_file2( fname, keys_, 
+        mask=mask.astype(np.bool),
+        outname = outname, 
+        Hsh = (args.Y, args.X),	
+        sig_G=args.sig_G,
+        verbose=True, 
+        thresh=args.thresh, 
+        make_sparse=True,
+        inside_outside=False,
+        filt=args.filt,
+        min_conn=args.min_conn,
+        max_conn=args.max_conn,
+        min_snr = args.min_snr,
+        sz = args.sz,
+        rmax=250,
+        rmax2=390,
+        ninside=10,
+        noutside=10,
+        #sY=[520,920],
+        #sX=[520,920],
+        min_dist=args.min_dist, 
+        nsigs=args.nsigs, 
+        min_num_pks=args.min_num_pks,
+        log_prefix="JOB %d:"%(jid+1),
+        log_freq=5,
+        ax=ax)
+
+
+for i_f,fname in enumerate(fnames):
+    print("opening file %s"%fname)
+    h5 = h5py.File( fname, 'r')
+    keys = list( h5.keys() )[1:]
+    keys_split = np.array_split(keys, args.num_jobs)
+    h5.close()
+    outname = out_fnames[i_f]
+    results = Parallel(n_jobs=args.num_jobs)(delayed(main)( fname, outname, keys_split[jid], jid) \
+        for jid in range( args.num_jobs)  )
+    
+
+
+
