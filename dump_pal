@@ -1,0 +1,109 @@
+#!/usr/bin/python3
+import os
+import pylab as plt
+import h5py
+import numpy as np
+import sys
+from find_peaks import make_cxi_file2
+import glob
+from argparse import ArgumentParser
+sys.path.append('/xfel/ffhs/dat/ue_180124/.asu_tools/lib/python')
+from joblib import Parallel, delayed
+
+
+parser = ArgumentParser(
+    description='')
+
+parser.add_argument(
+    '-r',
+    dest='run',
+    type=str,
+    default=None, help="run number")
+
+parser.add_argument(
+    '-j',
+    dest='num_jobs',
+    type=int,
+    default=None, help="number of jobs to use")
+
+parser.add_argument(
+    '-o, --output-dir',
+    dest='outdir',
+    type=str,
+    default=None, help="where to store output files, defaults to results")
+
+parser.add_argument(
+    '-t',
+    dest='tag',
+    type=str,
+    default='noname',help="a tag appended to output filename, \
+        used to describe the run, e.g. ps2" )
+
+parser.add_argument(
+    '-X', '--fast-scan',
+    dest='X',
+    type=int,
+    default=1440, help='image fast-scan dimension')
+
+parser.add_argument(
+    '-Y', '--slow-scan',
+    dest='Y',
+    type=int,
+    default=1440, help='image slow-scan dimension')
+
+args = parser.parse_args()
+
+if args.outdir is None:
+    outdir = "/xfel/ffhs/dat/ue_180124/results/multi_dump"
+else:
+    outdir = args.outdir
+    if not os.path.exists(outdir):
+        print("Dir %s does not exists for writing"%outdir)
+
+run_s = args.run.zfill(7)
+rundir = "/xfel/ffhs/dat/ue_180124/raw_data/%s/*.h5"%( run_s)
+fnames = glob.glob( rundir )
+
+mask = h5py.File('/xfel/ffhs/dat/ue_180124/masks/badpix_mask_Jan23_PM_from_sigma.h5','r')['data'].value
+
+
+print("loading fnames")
+print (fnames)
+
+
+def main(fname, keys_, jid, outdir):
+    out = os.path.join(outdir, "run%s_file%d-job%d_%s.cxi")
+    compression=None
+    compression_opts=None
+    shuffle=False
+    dtype=np.float32
+    outname = out%(args.run, i_f+1, jid+1,  args.tag)
+    h5 = h5py.File( fname, 'r')
+    with h5py.File( outname, "w") as out:
+        img_dset = out.create_dataset('data', 
+            shape=(len(keys_),args.Y, args.X),
+            #maxshape=(None,args.Y, args.X ),  
+            dtype=dtype,
+            chunks=(1,args.Y, args.X),
+            compression=compression, 
+            compression_opts=compression_opts,
+            shuffle=shuffle)
+        for i,k in enumerate(keys_):
+            if i%50==0:
+                print("Job %d; image %d / %d"%(jid, i+1, len(keys_)))
+            img = h5[k]['data'].value
+            img_dset[i] = img #*mask
+
+
+for i_f,fname in enumerate(fnames):
+    print("opening file %s"%fname)
+    h5 = h5py.File( fname, 'r')
+    keys = list( h5.keys() )[1:]
+    keys_split = np.array_split(keys, args.num_jobs)
+    h5.close()
+    results = Parallel(n_jobs=args.num_jobs)(delayed(main)( fname, keys_split[jid], jid, outdir) \
+        for jid in range( args.num_jobs)  )
+    
+
+
+

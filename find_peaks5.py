@@ -13,7 +13,7 @@ import pylab as plt
 import sys
 sys.path.append('/xfel/ffhs/dat/ue_180124/.asu_tools/lib/python')
 from joblib import Parallel, delayed
-
+import os
 
 def plot_pks( img, pk=None, ret_sub=False, **kwargs):
     if pk is None:
@@ -36,7 +36,8 @@ def plot_pks_serial( img, pk, delay, ax):
     ax.images[0].set_clim(m-s, m+5*s)
     #ax.imshow( img, vmax=m+5*s, vmin=m-s, cmap='viridis', aspect='equal', interpolation='nearest')
     for cent in pk:
-        circ = plt.Circle(xy=(cent[1], cent[0]), radius=3, ec='r', fc='none',lw=1)
+        circ = plt.Circle(xy=(cent[1], cent[0]), 
+            radius=5, ec='Deeppink', fc='none',lw=1)
         ax.add_patch(circ)
     plt.draw()
     plt.pause(delay)
@@ -369,12 +370,11 @@ def make_cxi_file2( input_name, keys, outname, Hsh,
     mask=None,
     dtype=np.float32, 
     verbose=True,
-    rmax=None,
-    rmax2=None,
+    r_in=None,
+    r_out=None,
     min_dist=None,
     ninside=15,
     noutside=15,
-    inside_outside=False,
     filt=0,
     min_snr=2.,
     min_conn=3,
@@ -387,17 +387,20 @@ def make_cxi_file2( input_name, keys, outname, Hsh,
     ax=None, 
     make_sparse=1, nsigs=2, min_num_pks=0, log_prefix="", log_freq=10):
     
+    
+    outname_base = os.path.basename( outname)
+    outname_temp = os.path.join( "/xfel/ffhs/dat/ue_180127/results/writing",
+        outname_base)
+    if os.path.exists( outname_temp):
+        os.remove(outname_temp)
+   
     h5 = h5py.File( input_name, 'r')
     images = ( h5[k]['data'].value for k in keys)
-    #if ax is not None:
-    #    fig = plt.figure(1)
-    #    ax = plt.gca()
     all_pk = []
     all_pk_intens = []
     if mask is None:
         mask = np.ones(Hsh).astype(bool)
-    with h5py.File( outname, "w") as out:
-        #img_dset = out.create_dataset("images", 
+    with h5py.File( outname_temp, "w") as out:
         img_dset = out.create_dataset('data', 
             shape=(500000,Hsh[0], Hsh[1]),
             maxshape=(None,Hsh[0], Hsh[1] ), 
@@ -406,7 +409,8 @@ def make_cxi_file2( input_name, keys, outname, Hsh,
             compression=compression, 
             compression_opts=comp_opts,
             shuffle=shuffle)
-
+        
+        no_hits=False
         count = 0
         for i_h,h in enumerate(images): 
             
@@ -422,23 +426,20 @@ def make_cxi_file2( input_name, keys, outname, Hsh,
                 sz=sz,
                 filt=filt)
             
-            if inside_outside:
+            if r_in is not None or r_out is not None:
                 y = np.array([ p[0] for p in pk ]).astype(float)
                 x = np.array([ p[1] for p in pk ]).astype(float)
                 r = np.sqrt( (y-717.)**2 + (x-717.)**2)
-                inds1 = np.where( r < rmax )[0]
-                inds2 = np.where( r > rmax2)[0]
-                if not inds1.size:
-                    continue
-                if not inds2.size:
-                    continue
-
-                if inds1.shape[0] < ninside:
-                    continue
-                if inds2.shape[0] < noutside:
-                    continue
-
-                inds = np.where( np.logical_or( r < rmax, r > rmax2))[0]
+                if r_in is not None:
+                    inds_in = np.where( r < r_in )[0]
+                else:
+                    inds_in = np.array([])
+                if r_out is not None:
+                    inds_out = np.where( r > r_out)[0]
+                else:
+                    inds_out = np.array([])
+                
+                inds = np.unique( np.hstack((inds_in, inds_out))).astype(int)
                 if not inds.size:
                     continue
                 pk = [pk[i] for i in inds]
@@ -448,10 +449,9 @@ def make_cxi_file2( input_name, keys, outname, Hsh,
             if npks <= min_num_pks:
                 continue
             if ax is not None:
-                #ax.clear()
                 plot_pks_serial((h*mask)[sY[0]:sY[1], sX[0]:sX[1]], pk, 0.001, ax)
             
-            all_pk.append( pk)
+            all_pk.append(pk)
             all_pk_intens.append( pk_I)
 
             count += 1
@@ -462,29 +462,37 @@ def make_cxi_file2( input_name, keys, outname, Hsh,
                     print("%s"%log_prefix)
                     print("\tFound %d / %d hits. (%.2f %%)"%( count, i_h+1,  perc))
         if count ==0:
-            return
-        img_dset.resize( (count, Hsh[0], Hsh[1]))
-        npeaks = [len(p) for p in all_pk]
-        max_n = max(npeaks)
-        pk_x = np.zeros((len(all_pk), max_n))
-        pk_y = np.zeros_like(pk_x)
-        pk_I = np.zeros_like(pk_x)
+            no_hits=True
+        else:
+            img_dset.resize( (count, Hsh[0], Hsh[1]))
+            npeaks = [len(p) for p in all_pk]
+            max_n = max(npeaks)
+            pk_x = np.zeros((len(all_pk), max_n))
+            pk_y = np.zeros_like(pk_x)
+            pk_I = np.zeros_like(pk_x)
 
-        for i,pk in enumerate(all_pk):
-            n = len( pk)
-            pk_x[i,:n] = [p[1] for p in pk ]
-            pk_y[i,:n] = [p[0] for p in pk ]
-            pk_I[i,:n] = all_pk_intens[i]
+            for i,pk in enumerate(all_pk):
+                n = len( pk)
+                pk_x[i,:n] = [p[1] for p in pk ]
+                pk_y[i,:n] = [p[0] for p in pk ]
+                pk_I[i,:n] = all_pk_intens[i]
 
-        npeaks = np.array( npeaks, dtype=np.float32)
-        pk_x = np.array( pk_x, dtype=np.float32)
-        pk_y = np.array( pk_y, dtype=np.float32)
-        pk_I = np.array( pk_I, dtype=np.float32)
+            npeaks = np.array( npeaks, dtype=np.float32)
+            pk_x = np.array( pk_x, dtype=np.float32)
+            pk_y = np.array( pk_y, dtype=np.float32)
+            pk_I = np.array( pk_I, dtype=np.float32)
 
-        out.create_dataset( 'peaks/nPeaks' , data=npeaks)
-        out.create_dataset( 'peaks/peakXPosRaw', data=pk_x )
-        out.create_dataset( 'peaks/peakYPosRaw', data=pk_y )
-        out.create_dataset( 'peaks/peakTotalIntensity', data=pk_I )
-
-    return all_pk, all_pk_intens
+            out.create_dataset( 'peaks/nPeaks' , data=npeaks)
+            out.create_dataset( 'peaks/peakXPosRaw', data=pk_x )
+            out.create_dataset( 'peaks/peakYPosRaw', data=pk_y )
+            out.create_dataset( 'peaks/peakTotalIntensity', data=pk_I )
+            out.create_dataset('log/hit_rate', data=perc)
+    if no_hits:
+        os.remove(outname_temp)
+        ret_packet = [ 0, i_h+1, 0]
+    else:
+        os.rename( outname_temp, outname)
+        ret_packet = [ count, i_h+1, perc  ]
+        
+    return ret_packet 
 

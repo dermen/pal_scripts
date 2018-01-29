@@ -72,11 +72,14 @@ class ModelApp(tk.Frame):
         self.xl = (None, None)
         self.yl = (None, None)
 
+        self.high = 1
+        self.low = 1
+
         self._display_frame()
         self._buttons()
         # self._color_scaler()
         self._display()
-
+        #self.put_slider()
 
     def _set_idx_fname_path(self):
         self.idx = self.indices[self.counter]
@@ -109,13 +112,14 @@ class ModelApp(tk.Frame):
         self.toolbar.update()
         self.canvas._tkcanvas.pack(side=tk.TOP, fill=tk.BOTH, expand=1, **frpk)
 
+
+
     def _display(self):
         self.m = np.median(self.img[self.img > 0])
         # np.sqrt( sum( [ (self.m - pix)**2 for pix in self.img[ self.img > 0 ] ]) )
-        self.s = self.img[self.img > 0] .std()
-        self.i_s = 1
-        self.vmin = self.m - self.i_s * self.s
-        self.vmax = self.m + self.i_s * self.s
+        self.s = 10 #self.img[self.img > 0] .std()
+        self.vmin = self.m - self.low * self.s
+        self.vmax = self.m + self.high * self.s
         
         if self.fix_zoom_variable.get() == 1:
             self.xl = self.ax.get_xlim()
@@ -136,12 +140,13 @@ class ModelApp(tk.Frame):
                 self.indices)))
         
         self.ax.imshow(self.img,
-                       cmap='viridis', interpolation='nearest',
+                       cmap='gist_gray', interpolation='nearest',
                        vmin=self.vmin, vmax=self.vmax)
         self.known_circs = []
         for cent in self.known_centers:
             circ = mpl.patches.Circle(
-                xy=(cent[1], cent[0]), radius=7, ec='r', fc='none', lw=1)
+                xy=(cent[1], cent[0]), 
+                radius=7, ec='Deeppink', fc='none', lw=1)
             self.ax.add_patch(circ)
             self.known_circs.append(circ)
             if self.toggle_known_var.get():
@@ -224,40 +229,71 @@ class ModelApp(tk.Frame):
         button_frame2.pack(side=tk.TOP, **frpk)
 
         increase = tk.Button(button_frame2,
-                             text='increase contrast',
+                             text='vmax up',
                              command=self._increase_contrast, **btnstyle)
         increase.pack(side=tk.LEFT, expand=tk.NO, **frpk)
 
         decrease = tk.Button(button_frame2,
-                             text='decrease contrast',
+                             text='vmax down',
                              command=self._decrease_contrast, **btnstyle)
         decrease.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        
 
+        decrease2 = tk.Button(button_frame2,
+                             text='vmin down',
+                             command=self._decrease_contrast2, **btnstyle)
+        decrease2.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        
+        increase2 = tk.Button(button_frame2,
+                             text='vmin up',
+                             command=self._increase_contrast2, **btnstyle)
+        increase2.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+
+
+    def put_slider(self): 
         button_frame3 = tk.Frame(self, **fr)
         button_frame3.pack(side=tk.TOP, **frpk)
+        self.slider = tk.Scale(button_frame3,
+                             from_=0, 
+                             to=5,
+                             resolution=0.1,
+                             command=self.update_contrast, 
+                             orient='horizontal')
+        self.slider.pack(side=tk.LEFT, expand=tk.NO, **frpk)
+        self.slider.set(1) #self.m)
+        self._job = None
 
 
-
-
+    def update_contrast(self, event):
+        if self._job is not None:
+            self.master.after_cancel( self._job)
+        self._job = self.master.after(500, self._do_something)
+    
+    def _do_something(self):
+        self._job = None
+        self.s = np.std( self.img[self.img> 0 ] ) *self.slider.get()
+        self._scaler2()
+        print ("new value:", self.slider.get() )
 
     def _color_scaler(self):
         scale_frame = tk.Frame(self, **fr)
         scale_frame.pack(side=tk.TOP, **frpk)
 
         self.scaler = tk.Scale(scale_frame,
-                               from_=0.001, to=10, resolution=0.1, orient=tk.HORIZONTAL,
+                               from_=0.001, to=10, 
+                               resolution=0.1, orient=tk.HORIZONTAL,
                                command=self._scaler)
         self.scaler.pack(side=tk.LEFT, expand=1, fill=tk.BOTH, **frpk)
 
-    def _scaler(self, ev):
-        im = self.ax.images[0]
-        self.i_s = self.scaler.get()
-        self.vmin = self.m - self.i_s * self.s
-        self.vmax = self.m + self.i_s * self.s
-        im.set_clim(self.vmin, self.vmax)
-        self.canvas.draw()
-        #nplt.pause(0.001)
 
+    def _scaler2(self):
+        im = self.ax.images[0]
+        self.vmin = self.m - self.low * self.s
+        self.vmax = self.m + self.high * self.s
+        im.set_clim(self.vmin, self.vmax)
+        #self.fig.canvas.draw()
+        #plt.pause(0.0001)
+        self.canvas.draw()
 
     def _next(self, increment):
         self.counter += increment
@@ -280,7 +316,6 @@ class ModelApp(tk.Frame):
         self.canvas.draw()
         #plt.pause(0.001)
 
-
     def _fix_zoom(self):
         if self.fix_zoom_variable.get()==1:
             self.xl = self.ax.get_xlim()
@@ -296,33 +331,54 @@ class ModelApp(tk.Frame):
         self.canvas.draw()
         #plt.pause(0.001)
 
-    def _decrease_contrast(self):
-        im = self.ax.images[0]
-        if self.i_s < 1:
-            self.i_s = self.i_s * 2
-        else:
-            self.i_s += 1
-        self.vmin = self.m - self.i_s * self.s
-        self.vmax = self.m + self.i_s * self.s
-        im.set_clim(self.vmin, self.vmax)
-        self.canvas.draw()
-        #plt.pause(0.001)
-
     def _increase_contrast(self):
         im = self.ax.images[0]
-
-        if self.i_s - 1 <= 0:
-            self.i_s = self.i_s * .5
-        else:
-            self.i_s = self.i_s - 1
-
-        self.vmin = self.m - self.i_s * self.s
-        self.vmax = self.m + self.i_s * self.s
+        #if self.high < 1:
+        #    self.high = self.high * 2
+        #else:
+        
+        self.high += 1
+        #self.vmin = self.m - self.i_s * self.s
+        self.vmax = max( self.m + self.high * self.s, self.vmin+1)
+        #self.vmax = self.m + self.high * self.s
         im.set_clim(self.vmin, self.vmax)
-        #self.fig.canvas.draw()
-        #plt.pause(0.0001)
         self.canvas.draw()
         #plt.pause(0.001)
+
+    def _decrease_contrast(self):
+        im = self.ax.images[0]
+
+        #if self.high - 1 <= 0:
+        #    self.high = self.high * .5
+        #else:
+        self.high = self.high - 1
+        self.vmax = max( self.m + self.high * self.s, self.vmin+1)
+        im.set_clim(self.vmin, self.vmax)
+        self.canvas.draw()
+
+    def _increase_contrast2(self):
+        im = self.ax.images[0]
+        #if self.low < 1:
+        #    self.low = self.low * 2
+        #else:
+        self.low += 1
+        self.vmin = min( self.m - self.low * self.s, self.vmax-1)
+        im.set_clim(self.vmin, self.vmax)
+        self.canvas.draw()
+        #plt.pause(0.001)
+
+    def _decrease_contrast2(self):
+        im = self.ax.images[0]
+
+        #if self.low - 1 <= 0:
+        #    self.low = self.low * .5
+        #else:
+        self.low = self.low - 1
+        
+        #self.vmin = self.m - self.low * self.s
+        self.vmin = min( self.m - self.low * self.s, self.vmax-1)
+        im.set_clim(self.vmin, self.vmax)
+        self.canvas.draw()
 
     def _update_display(self):
         #self.idx = self.indices[self.counter]
@@ -332,8 +388,6 @@ class ModelApp(tk.Frame):
         self._set_centers()
         self.ax.clear()
         self._display()
-
-
 ###########################
 ###########################
 ###########################
@@ -363,23 +417,22 @@ if __name__ == '__main__':
         '-data',
         dest='images_path',
         type=str,
-        default=None)
+        default="data")
 
     parser.add_argument(
         '-p, --peaks-path',
         dest='peaks_path',
         type=str,
-        default=None)
+        default='peaks')
 
     parser.add_argument(
         '-f, --fname',
         dest='fname',
         type=str,
-        default=None)
+        default='data')
     args = parser.parse_args()
 
     
-    print("erer")
 
     root = tk.Tk()
     root.title("DDview")

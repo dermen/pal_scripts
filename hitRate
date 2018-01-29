@@ -1,0 +1,145 @@
+#!/usr/bin/python3
+import numpy as np 
+import sys
+import pandas
+import h5py
+import re
+import os
+sys.path.append('/xfel/ffhs/dat/ue_180124/.asu_tools/lib/python')
+from joblib import Parallel, delayed
+
+###
+# CONVERT A CRYSTFEL STREAM FILE
+# INTO DATA TABLES SO THAT
+# THE DATA CAN BE EASILY MANIPULATED
+# AND ANALYZED
+
+# usage: python pickleStream.py myfile.stream
+#future usage: python pickleStream.py listofstreamfiles -p myoutputprefix
+
+#  2 TABLES ARE MADE, A DATATABLE OF KNOWN PEAKS, AND A DATA TABLE OF PREDICTED PEAKS
+
+# CURRENTLY ONLY WORKS ON INVADER-DERMEN STYLE STREAM FILES (SINGLE PANEL, ASS IMAGES)
+
+# FUTURE MODIFICATIONS INCLUDE ABILITY TO MERGE MULTIPLE STREAM FILES... SHOULD BE
+# IMMEDIATE , JUST 
+# >> KNOWN_PKS_df = PANDAS.CONCAT([KNOWN_PKS_1_df, KNOWN_PKS_2_df, ...])
+
+# ~~~~~~~~~~~~~~~~~~
+# Globals
+
+remove_zero_intens = True
+
+# dummie function used below
+split_line = lambda x: x.strip().split()
+
+# in the stream file, these are the columns corresponding to the predicted peaks... 
+# ugly text files
+pred_pk_cols = ['h',
+ 'k',
+ 'l',
+ 'I',
+ 'sigma(I)',
+ 'peak',
+ 'background',
+ 'fs/px',
+ 'ss/px',
+ 'panel']
+# and the columns for found peaks... 
+known_pk_cols = ['fs/px','ss/px','(1/d)/nm^-1','Intensity' ,'Panel']
+
+#~~~~~~~~~~~~~~~~~~~~~
+
+# pass stream file as an arg.. 
+stream_file = sys.argv[1]
+prefix = os.path.splitext(stream_file)[0]
+
+# load the stream file contents
+print("Reading the stream file %s"%stream_file)
+stream_str = open(stream_file, 'r').read() # stream file
+stream_dir = os.path.abspath( os.path.dirname(stream_file) )
+
+# ~~~~~~~~~~~~~~~~~~~~~~~
+# parse the geometry section of the stream file
+s1 = 'Begin geometry file'
+s2 = 'End geometry file'
+geom = re.search('Begin geometry(.*)End geometry', stream_str, flags=re.DOTALL).group(1).split('\n')
+
+#~ find all paths that would lead to a dataset... then ensure only one is found because not compatible with multiple paths currently..  
+found_paths = []
+for line in geom:
+    if 'data = ' in line:
+        if line[0] == ';':
+            continue
+        found_paths.append( line.split('=')[-1].strip() )
+assert( len( found_paths) == 1 ) 
+dataset_path = found_paths[0]
+# ~~~~~~~~~~
+
+def main( patts, jobID):
+
+#   containers for dataframes
+    all_known = [] # known or detecred peak dataframes`
+
+    total = 0    
+    for i_patt,patt in enumerate(patts):
+        if i_patt%50==0:
+            print ("Job %d --- Processing  patterns %d/%d"%(jobID, i_patt+1, len(patts)))
+
+#   get the data for the predicted peaks
+        s1 = 'Peaks from peak search'
+        s2 = 'End of peak list'
+        pk_dat =  list(map( split_line, patt.split(s1)[1].split(s2)[0].strip().split('\n') )) [1:]
+        n = len( pk_dat)
+        if n > int( sys.argv[3]):
+            total += 1
+        #known_pk_df = pandas.DataFrame.from_records(pk_dat, columns=known_pk_cols)
+
+#   get the cxi filename and dataset index
+        #fname = os.path.join( stream_dir, patt.split('Image filename: ')[1].split('\n')[0].strip() ) 
+        #assert( os.path.exists(fname) )
+        #dataset_idx = int( patt.split('Event: //')[1].split('\n')[0].strip() ) 
+
+#   make cols float where approrpriate... 
+        #for col in known_pk_cols[:-1]: # every col except panel col (which is a string... ) 
+        #    known_pk_df[col] = known_pk_df[col].values.astype(float)
+       
+#   add image location info...
+        #known_pk_df['cxi_fname'] =  fname
+        #known_pk_df['dataset_index'] =   dataset_idx
+        #known_pk_df['dataset_path'] = dataset_path
+
+        #assert( dataset_path in h5py.File(fname, 'r'))
+
+#   append the known peak dataframe for this pattern... 
+        #all_known.append( known_pk_df ) 
+
+############################
+
+#   now check for crystals inside the pattern
+
+
+    return total
+
+# split the stream file into the patterns( hits) (each diffraction pattern hit is called a chunk in stream file)
+s = 'End chunk'
+idx = stream_str.rfind(s)
+stream_str = stream_str[ : idx+len(s)]
+
+patts = [ sub_str.split('End chunk')[0] \
+    for sub_str in  stream_str.split('Begin chunk')[1:] ]  
+
+
+n_jobs = int( sys.argv[2]) 
+patts_per_job = np.array_split( patts, n_jobs)
+
+results = Parallel(n_jobs=n_jobs)(delayed(main)(ppj, jid) for jid, ppj in enumerate( patts_per_job) )
+
+total_hits = sum( results)
+total_shots = len( patts)
+rate = float( total_hits) / float( total_shots)
+
+print("hit rate: %.4f"%rate)
+#assert( all_pred and all_known and all_cell)
+
+

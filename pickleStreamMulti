@@ -1,10 +1,11 @@
-#!/home/invader/.Zython/bin/python
+#!/usr/bin/python3
 import numpy as np 
 import sys
 import pandas
 import h5py
 import re
 import os
+sys.path.append('/xfel/ffhs/dat/ue_180124/.asu_tools/lib/python')
 from joblib import Parallel, delayed
 
 ###
@@ -71,8 +72,9 @@ for line in geom:
         if line[0] == ';':
             continue
         found_paths.append( line.split('=')[-1].strip() )
-assert( len( found_paths) == 1 ) 
+#assert( len( found_paths) == 1 ) 
 dataset_path = found_paths[0]
+print(dataset_path)
 # ~~~~~~~~~~
 
 def main( patts, jobID):
@@ -89,7 +91,7 @@ def main( patts, jobID):
 #   get the data for the predicted peaks
         s1 = 'Peaks from peak search'
         s2 = 'End of peak list'
-        pk_dat =  map( split_line, patt.split(s1)[1].split(s2)[0].strip().split('\n') )[1:]
+        pk_dat =  list(map( split_line, patt.split(s1)[1].split(s2)[0].strip().split('\n') )) [1:]
         known_pk_df = pandas.DataFrame.from_records(pk_dat, columns=known_pk_cols)
 
 #   get the cxi filename and dataset index
@@ -118,8 +120,8 @@ def main( patts, jobID):
             continue
         
 #   this is gross but it does the trick... 
-        xtals = [ map( split_line, \
-            ss.split('End crystal')[0].split('\n')[16:-2])
+        xtals = [ list( map( split_line, \
+            ss.split('End crystal')[0].split('\n')[16:-2]))
             for ss in  patt.split('Begin crystal')[1:] ]
 
 
@@ -150,9 +152,9 @@ def main( patts, jobID):
             astar = cell_lines[1].split()[2:5]
             bstar = cell_lines[2].split()[2:5]
             cstar = cell_lines[3].split()[2:5]
-            astar1, astar2,astar3 = map( lambda x: float(x)*.1, astar )
-            bstar1, bstar2,bstar3 = map( lambda x: float(x)*.1, bstar )
-            cstar1, cstar2,cstar3 = map( lambda x: float(x)*.1, cstar )
+            astar1, astar2,astar3 = list(map( lambda x: float(x)*.1, astar) )
+            bstar1, bstar2,bstar3 = list(map( lambda x: float(x)*.1, bstar ))
+            cstar1, cstar2,cstar3 = list(map( lambda x: float(x)*.1, cstar ))
             cell_data['astar1'].append(astar1)
             cell_data['astar2'].append(astar2)
             cell_data['astar3'].append(astar3)
@@ -205,6 +207,10 @@ def main( patts, jobID):
     return all_known, all_pred, all_cell
 
 # split the stream file into the patterns( hits) (each diffraction pattern hit is called a chunk in stream file)
+s = 'End chunk'
+idx = stream_str.rfind(s)
+stream_str = stream_str[ : idx+len(s)]
+
 patts = [ sub_str.split('End chunk')[0] \
     for sub_str in  stream_str.split('Begin chunk')[1:] ]  
 
@@ -226,7 +232,7 @@ for r in results:
     if r[2]:
         all_cell += r[2]
 
-assert( all_pred and all_known and all_cell)
+#assert( all_pred and all_known and all_cell)
 
 print("Combining data 1/3...")
 all_known = pandas.concat( all_known)
