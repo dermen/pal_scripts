@@ -9,7 +9,7 @@ from scipy.ndimage.filters import maximum_filter, gaussian_filter
 from scipy.ndimage.morphology import generate_binary_structure, binary_erosion
 from scipy.ndimage import measurements
 from scipy.spatial import cKDTree
-from skimage.feature import blob_dog, blob_log, blob_doh
+
 
 def plot_pks( img, pk=None, **kwargs):
     if pk is None:
@@ -54,10 +54,10 @@ def detect_peaks(image):
 
     return detected_peaks
 
-def pk_pos( img_orig, make_sparse=False, nsigs=7, sig_G=None, thresh=1, min_snr=2., 
-    min_conn=2, filt=False, sz=4):
+def pk_pos( img_, make_sparse=False, nsigs=7, sig_G=None, thresh=1, sz=4, min_snr=2., 
+    min_conn=2, filt=False):
     if make_sparse:
-        img = img_orig.copy()
+        img = img_[sz:-sz,sz:-sz].copy()
         m = img[ img > 0].mean()
         s = img[ img > 0].std()
         img[ img < m + nsigs*s] = 0
@@ -66,10 +66,10 @@ def pk_pos( img_orig, make_sparse=False, nsigs=7, sig_G=None, thresh=1, min_snr=
         lab_img, nlab = measurements.label(detect_peaks(gaussian_filter(img,sig_G)))
         locs = measurements.find_objects(lab_img)
         pos = [ ( int((y.start + y.stop) /2.), int((x.start+x.stop)/2.)) for y,x in locs ]
-        pos =  [ p for p in pos if img_orig[ p[0], p[1] ] > thresh]
+        pos =  [ p for p in pos if img[ p[0], p[1] ] > thresh]
         intens = [ img[ p[0], p[1]] for p in pos ] 
     else:
-        img = img.copy()
+        img = img_[sz:-sz,sz:-sz].copy()
         if sig_G is not None:
             lab_img, nlab = measurements.label(detect_peaks(gaussian_filter(img,sig_G)))
         else:
@@ -78,39 +78,31 @@ def pk_pos( img_orig, make_sparse=False, nsigs=7, sig_G=None, thresh=1, min_snr=
         pos = [ ( int((y.start + y.stop) /2.), int((x.start+x.stop)/2.)) for y,x in locs ]
         pos =  [ p for p in pos if img[ p[0], p[1] ] > thresh]
         intens = [ img[ p[0], p[1]] for p in pos ] 
+    pos = np.array(pos)+sz
     
     if filt:
         new_pos = []
         new_intens =  []
         for (j,i),I in zip(pos, intens):
-            im = img_orig[j-sz:j+sz,i-sz:i+sz]
-            
-            pts = np.sort( im[ im > 0].ravel() ) 
-            bg = np.median( pts[:20] )
+            im = img_[j-sz:j+sz,i-sz:i+sz]
+            pts = im[ im > 0].ravel()
+            bg = np.median( pts )
             if bg == 0:
                 continue
-            noise = np.std( pts[:20]-bg)
+            noise = np.std( pts-bg)
+            #noise = np.median( np.sqrt(np.mean( (pts-bg)**2) ) )
             
-            signal = np.median( pts[::-1][:5] ) -bg
-            
-            jmx,imx = np.unravel_index( np.argmax(im) , im.shape ) 
-            I = im[ jmx,imx]
-
-            snr = signal / noise
-
-            if snr < min_snr:
+            if I/bg < min_snr:
                 continue
 
-            #im_n = im / noise
-            #blob = measure.label(im_n > min_snr)
-            #lab = blob[ jmx, imx ]
-            #connectivity = np.sum( blob == lab)
-            #if connectivity < min_conn:
-            #    continue
+            im_n = im / noise
+            blob = measure.label(im_n > min_snr)
+            lab = blob[ sz, sz ]
+            connectivity = np.sum( blob == lab)
+            if connectivity < min_conn:
+                continue
             new_pos.append( (j,i))
-            new_intens.append( signal)
-        if check_conn:
-        
+            new_intens.append( I)
         pos = new_pos
         intens = new_intens
     return pos, intens

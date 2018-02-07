@@ -23,7 +23,6 @@ from matplotlib.widgets import RectangleSelector
 
 from new_slide_hist import HistUpdater
 
-
 btnstyle = {'font': 'Helvetica 10 bold', 
             'activebackground': 'green', 'activeforeground': 'white',
             'relief': tk.RAISED, 'highlightcolor':'red'}  # , 'bd':5}
@@ -75,7 +74,6 @@ class ZoomPan:
             else:
                 # deal with something that should never happen
                 scale_factor = 1
-                print event.button
 
             new_width = (cur_xlim[1] - cur_xlim[0]) * scale_factor
             new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
@@ -164,7 +162,7 @@ class ImageViewer(tk.Frame):
 
     def _add_hist_updater(self):
         self.hist_updater = HistUpdater( self.hist_frame, self.img.ravel(), label='pixels', plot=False, range_slider_len=800, 
-            background='white')
+            background='white', minval=-100, maxval=1000)
         self.hist_updater.pack(side=tk.TOP, fill=tk.BOTH, expand=tk.YES)
         
     def _create_figure(self):
@@ -177,29 +175,38 @@ class ImageViewer(tk.Frame):
     
     def _add_img(self):
         self._im = self.ax.imshow(self.img, interpolation='nearest', norm=None, 
-            vmin=self.vmin, vmax=self.vmax, cmap='gnuplot')
+            vmin=self.vmin, vmax=self.vmax, cmap='gist_gray')
         self.vmin,self.vmax = self._im.get_clim()
         #self.cbar = plt.colorbar( self._im)
         self.ax.format_coord = Formatter(self._im)
 
     def _setup_canvas(self):
-        self.image_frame_left = tk.Frame(self.image_frame, **fr)
-        self.image_frame_left.pack(fill=tk.BOTH, side=tk.LEFT, expand=1)
-        
-        self.image_left_canvas_frame = tk.Frame(self.image_frame_left, **fr)
-        self.image_left_canvas_frame.pack(fill=tk.BOTH, expand=1)
-        
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.image_left_canvas_frame)
-        self.canvas.get_tk_widget().configure(background='white', highlightcolor='white', highlightbackground='white')
-        self.canvas.draw()
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
-        
-        self.image_toolbar_fr = tk.Frame(self.image_frame_left, **fr)
-        self.image_toolbar_fr.pack(fill=tk.X, expand=1)
-        self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.image_toolbar_fr)
+        toplvl= tk.Toplevel(self.master)
+        self.disp_frame = tk.Frame(toplvl)
+        self.disp_frame.pack(side=tk.TOP, expand=1, fill=tk.BOTH, **frpk)
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.disp_frame) 
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, 
+            expand=1, **frpk)
+        self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.disp_frame)
         self.toolbar.update()
+        self.canvas._tkcanvas.pack(side=tk.TOP, 
+            fill=tk.BOTH, expand=1, **frpk)
+
+        #self.image_frame_left = tk.Frame(self.image_frame, **fr)
+        #self.image_frame_left.pack(fill=tk.BOTH, side=tk.LEFT, expand=1)
+        #self.image_left_canvas_frame = tk.Frame(self.image_frame_left, **fr)
+        #self.image_left_canvas_frame.pack(fill=tk.BOTH, expand=1)
+        #self.canvas = FigureCanvasTkAgg(self.fig, master=self.image_left_canvas_frame)
+        #self.canvas.get_tk_widget().configure(background='white', highlightcolor='white', highlightbackground='white')
+        self.canvas.draw()
+        #self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        
+        #self.image_toolbar_fr = tk.Frame(self.image_frame_left, **fr)
+        #self.image_toolbar_fr.pack(fill=tk.X, expand=1)
+        #self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.image_toolbar_fr)
+        #self.toolbar.update()
         #self.toolbar.get_tk_widget().configure(background='black', highlightcolor='black', highlightbackground='black')
-        self.toolbar.pack(fill=tk.X, expand=1)
+        #self.toolbar.pack(fill=tk.X, expand=1)
         
         self.zp = ZoomPan()
         self.figZoom = self.zp.zoom_factory( self.ax, base_scale=1.1)
@@ -470,13 +477,13 @@ if __name__ == '__main__':
         '-data',
         dest='images_path',
         type=str,
-        default=None)
+        default='data')
 
     parser.add_argument(
         '-p, --peaks-path',
         dest='peaks_path',
         type=str,
-        default=None)
+        default='peaks')
 
     parser.add_argument(
         '-f, --fname',

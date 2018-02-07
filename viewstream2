@@ -1,4 +1,4 @@
-#!/usr/local/Cellar/python/2.7.13/Frameworks/Python.framework/Versions/2.7/bin/python
+#!/usr/bin/python3
 try: 
     import Tkinter as tk
 except ImportError:
@@ -6,7 +6,7 @@ except ImportError:
 import sys
 import re
 import os
-#sys.path.append( '/home/dermen/.local/lib/python2.7/site-packages')
+sys.path.append('/xfel/ffhs/dat/ue_180124/.asu_tools/lib/python')
 from joblib import Parallel, delayed
 import pandas
 import h5py
@@ -41,8 +41,9 @@ class ModelApp(tk.Frame):
 
 #       load the files, put in a dict...
         self.unique_fnames = self.cell.cxi_fname.unique()
-        assert(all(f in self.unique_fnames for f in self.pred.cxi_fname.unique()))
-        assert(all(f in self.unique_fnames for f in self.known.cxi_fname.unique()))
+        print (self.unique_fnames)
+        #assert(all(f in self.unique_fnames for f in self.pred.cxi_fname.unique()))
+        #assert(all(f in self.unique_fnames for f in self.known.cxi_fname.unique()))
         self.hdf5_handles = {f: h5py.File(f, 'r') for f in self.unique_fnames}
 
 #       load number of shots per fname
@@ -63,7 +64,7 @@ class ModelApp(tk.Frame):
         #plt.draw()
         #plt.pause(0.00001)
         self.fig2, self.axs = plt.subplots( nrows=2, ncols=3)
-        
+        self.i_s = 1 
         #self.fig2 = Figure(figsize=(6, 6))
         #self.ax1 = self.fig2.add_subplot(321)
         #self.ax2 = self.fig2.add_subplot(322)
@@ -93,6 +94,12 @@ class ModelApp(tk.Frame):
         self.indices = df.dataset_index.values
         self.cxi_fnames = df.cxi_fname.values
         self.dset_paths = df.dataset_path.values
+        self.A = df.a.values
+        self.B = df.b.values
+        self.C = df.c.values
+        self.AL = df.alpha.values
+        self.BE = df.beta.values
+        self.GA = df.gamma.values
 #       choose an initial pattern
         self.counter = 0
 
@@ -138,14 +145,12 @@ class ModelApp(tk.Frame):
         self.m = np.median(self.img[self.img > 0])
         # np.sqrt( sum( [ (self.m - pix)**2 for pix in self.img[ self.img > 0 ] ]) )
         self.s = self.img[self.img > 0] .std()
-        self.i_s = 1
         self.vmin = self.m - self.i_s * self.s
         self.vmax = self.m + self.i_s * self.s
         
         if self.fix_zoom_variable.get() == 1:
             self.xl = self.ax.get_xlim()
             self.yl = self.ax.get_ylim()
-            print self.xl, self.yl
         else:
             self.xl = (-0.5, self.img.shape[1] - 0.5)
             self.yl = (self.img.shape[0] - 0.5, -0.5)
@@ -155,19 +160,26 @@ class ModelApp(tk.Frame):
         #    (self.fname, self.path, self.idx, self.counter, len(
         #        self.indices)))
 
+        latt = self.cell.lattice_type.values[self.counter]
+        a = self.A[self.counter]
+        b = self.B[self.counter]
+        c = self.C[self.counter]
+        al = self.AL[self.counter]
+        be = self.BE[self.counter]
+        ga = self.GA[self.counter]
 
         self.ax.set_title(
-            '%s; %s:%d, \ncounter: %d/%d' %
+            '%s; %s:%d, \ncounter: %d/%d; cell type: %s,  a,b,c,al,be,ga=%.2f, %.2f, %.2f, %.2f, %.2f, %.2f' %
             (self.fname, "", self.idx, self.counter+1, len(
-                self.indices)))
+                self.indices), latt,a,b,c,al,be,ga))
         
         self.ax.imshow(self.img,
-                       cmap='viridis', interpolation='nearest',
+                       cmap='gist_gray', interpolation='nearest',
                        vmin=self.vmin, vmax=self.vmax)
         self.known_circs = []
         for cent in self.known_centers:
             circ = mpl.patches.Circle(
-                xy=(cent[1], cent[0]), radius=7, ec='r', fc='none', lw=1)
+                xy=(cent[1], cent[0]), radius=6, ec='Deeppink', fc='none', lw=1)
             self.ax.add_patch(circ)
             self.known_circs.append(circ)
             if self.toggle_known_var.get():
@@ -178,7 +190,8 @@ class ModelApp(tk.Frame):
         self.pred_circs = []
         for cent in self.pred_centers:
             circ = mpl.patches.Circle(
-                xy=(cent[1], cent[0]), radius=7, ec='w', fc='none', lw=1, ls='dashed')
+                xy=(cent[1], cent[0]), radius=9, 
+                ec='b', fc='none', lw=1, ls='dashed')
             self.ax.add_patch(circ)
             self.pred_circs.append(circ)
             if self.toggle_pred_var.get():
@@ -279,7 +292,7 @@ class ModelApp(tk.Frame):
 
     def _filter_unit_cells(self):
         queries = []
-        for name, hu in self.histupdaters.iteritems():
+        for name, hu in self.histupdaters.items():
             query = "%.4f <= %s <= %.4f"%(hu.minval, name, hu.maxval)
             queries.append(query)
             print(query)
@@ -319,12 +332,12 @@ class ModelApp(tk.Frame):
         #ncols = self.axs_ncols
         i_ax = 0
         self.histupdaters = {}
-        for i_row in xrange( nrows):
-            for i_col in xrange( ncols):
+        for i_row in range( nrows):
+            for i_col in range( ncols):
                 #ax = self.axs[ i_ax ] # i_row, i_col]
                 ax = self.axs[ i_row, i_col]
                 label = labels[ i_ax]
-                dat = DAT[i_ax][::10]
+                dat = DAT[i_ax]
                 color = colors[i_ax]
                 i_ax +=1
                 histupdater = HistUpdater(root, dat, self.fig2, ax, 
@@ -463,280 +476,6 @@ class ModelApp(tk.Frame):
 ###########################
 
 
-
-def sub_main( patts, jobID, stream_dir, dataset_path):
-    pred_pk_cols = ['h',
-     'k',
-     'l',
-     'I',
-     'sigma(I)',
-     'peak',
-     'background',
-     'fs/px',
-     'ss/px',
-     'panel']
-    known_pk_cols = ['fs/px','ss/px','(1/d)/nm^-1','Intensity' ,'Panel']
-    split_line = lambda x: x.strip().split()
-
-#   containers for dataframes
-    all_known = [] # known or detecred peak dataframes`
-    all_pred = [] # predicted peak dataframes
-    all_cell = []
-    
-    for i_patt,patt in enumerate(patts):
-        if i_patt%50==0:
-            print ("Job %d --- Processing  patterns %d/%d"%(jobID, i_patt+1, len(patts)))
-
-#   get the data for the predicted peaks
-        s1 = 'Peaks from peak search'
-        s2 = 'End of peak list'
-        pk_dat =  map( split_line, patt.split(s1)[1].split(s2)[0].strip().split('\n') )[1:]
-        known_pk_df = pandas.DataFrame.from_records(pk_dat, columns=known_pk_cols)
-
-#   get the cxi filename and dataset index
-        fname = os.path.join( stream_dir, patt.split('Image filename: ')[1].split('\n')[0].strip() ) 
-        assert( os.path.exists(fname) )
-        try:
-            dataset_idx = int( patt.split('Event: //')[1].split('\n')[0].strip() ) 
-        except IndexError:
-            dataset_idx = 0
-#   make cols float where approrpriate... 
-        for col in known_pk_cols[:-1]: # every col except panel col (which is a string... ) 
-            known_pk_df[col] = known_pk_df[col].values.astype(float)
-       
-#   add image location info...
-        known_pk_df['cxi_fname'] =  fname
-        known_pk_df['dataset_index'] =   dataset_idx
-        known_pk_df['dataset_path'] = dataset_path
-
-        assert( dataset_path in h5py.File(fname, 'r'))
-
-#   append the known peak dataframe for this pattern... 
-        all_known.append( known_pk_df ) 
-
-############################
-
-#   now check for crystals inside the pattern
-        if not 'Begin crystal' in patt and not 'End crystal' in patt:
-            continue
-        
-#   this is gross but it does the trick... 
-        xtals = [ map( split_line, \
-            ss.split('End crystal')[0].split('\n')[16:-2])
-            for ss in  patt.split('Begin crystal')[1:] ]
-
-
-        xtal_cells = [  
-            ss.split('End crystal')[0].split('\n')[1:13] #[:16-2]
-            for ss in  patt.split('Begin crystal')[1:]   ]
-
-
-        cell_data = {'a':[], 'b':[], 'c':[], 'alpha':[], 'beta':[], 'gamma':[] , 'dataset_index':[],
-            'cxi_fname':[], 'dataset_path':[], 
-            'astar1':[],'astar2':[], 'astar3':[], 
-            'bstar1':[],'bstar2':[], 'bstar3':[], 
-            'cstar1':[],'cstar2':[], 'cstar3':[], 
-            'lattice_type':[], 'centering':[], 'diffraction_resolution_limit':[]}
-        for cell_lines in xtal_cells:
-            cell = cell_lines[0].split()
-#           cell_lines[0] --> 'Cell parameters 14.29725 23.52881 31.38764 nm, 91.11937 90.26797 89.47856 deg'
-            cell_data['a'].append( float( cell[2]) * 10 )
-            cell_data['b'].append(  float( cell[3]) * 10 ) 
-            cell_data['c'].append(  float( cell[4]) * 10 )
-            cell_data['alpha'] .append(  float( cell[6]) )
-            cell_data['beta'] .append(  float( cell[7])  )
-            cell_data['gamma'] .append(  float( cell[8]) )
-            cell_data['dataset_index'] .append( dataset_idx )
-            cell_data['cxi_fname'] .append( fname)
-            cell_data['dataset_path'] .append(  dataset_path)
-            
-            astar = cell_lines[1].split()[2:5]
-            bstar = cell_lines[2].split()[2:5]
-            cstar = cell_lines[3].split()[2:5]
-            astar1, astar2,astar3 = map( lambda x: float(x)*.1, astar )
-            bstar1, bstar2,bstar3 = map( lambda x: float(x)*.1, bstar )
-            cstar1, cstar2,cstar3 = map( lambda x: float(x)*.1, cstar )
-            cell_data['astar1'].append(astar1)
-            cell_data['astar2'].append(astar2)
-            cell_data['astar3'].append(astar3)
-            cell_data['bstar1'].append(bstar1)
-            cell_data['bstar2'].append(bstar2)
-            cell_data['bstar3'].append(bstar3)
-            cell_data['cstar1'].append(cstar1)
-            cell_data['cstar2'].append(cstar2)
-            cell_data['cstar3'].append(cstar3)
-
-            lattice = cell_lines[4].split('=')[1].strip()
-            cell_data['lattice_type'].append( lattice)
-            
-            centering = cell_lines[5].split('=')[1].strip()
-            cell_data['centering'].append( centering)
-            
-            res = float( cell_lines[9].split('or')[1].strip().split()[0] )
-            cell_data['diffraction_resolution_limit'].append( res)
-    
-        all_cell.append(  pandas.DataFrame( data=cell_data ))
-
-            
-#   go through each xtal, make it a dataframe, label the xtal ID
-        pred_pk_dfs = []
-        for i_xtal,xtal in enumerate( xtals):
-            xtal = [  _row for _row in xtal if float(_row[3]) > 0  ]
-            df = pandas.DataFrame.from_records( xtal,  columns =pred_pk_cols )
-            df['xtal ID'] = i_xtal
-            pred_pk_dfs.append( df) 
-      
-
-#   concatenate the dataframes into 1
-        pred_pk_df = pandas.concat(pred_pk_dfs)
-
-#   make columns float when appropriate
-        for col in pred_pk_cols[:-1]:# every col except panel col (which is a string... ) 
-            pred_pk_df[col] = pred_pk_df[col].values.astype(float)
-        
-#   remove predikshins where intensity is <= 0
-        pred_pk_df = pred_pk_df[ pred_pk_df.I > 0]
-
-#   add the image location info
-        pred_pk_df['cxi_fname'] = fname
-        pred_pk_df['dataset_index'] = dataset_idx
-        pred_pk_df['dataset_path'] = dataset_path
-
-        all_pred.append( pred_pk_df )
-
-    print("here")
-    return all_known, all_pred, all_cell
-
-
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-#!~~~~~~~~~~~~~~~~
-
-
-def pickle_stream(stream_file, n_jobs):
-###
-# CONVERT A CRYSTFEL STREAM FILE
-# INTO DATA TABLES SO THAT
-# THE DATA CAN BE EASILY MANIPULATED
-# AND ANALYZED
-
-# usage: python pickleStream.py myfile.stream
-#future usage: python pickleStream.py listofstreamfiles -p myoutputprefix
-
-#  2 TABLES ARE MADE, A DATATABLE OF KNOWN PEAKS, AND A DATA TABLE OF PREDICTED PEAKS
-
-# CURRENTLY ONLY WORKS ON INVADER-DERMEN STYLE STREAM FILES (SINGLE PANEL, ASS IMAGES)
-
-# FUTURE MODIFICATIONS INCLUDE ABILITY TO MERGE MULTIPLE STREAM FILES... SHOULD BE
-# IMMEDIATE , JUST 
-# >> KNOWN_PKS_df = PANDAS.CONCAT([KNOWN_PKS_1_df, KNOWN_PKS_2_df, ...])
-
-# ~~~~~~~~~~~~~~~~~~
-# Globals
-
-    remove_zero_intens = True
-
-# dummie function used below
-    split_line = lambda x: x.strip().split()
-
-# in the stream file, these are the columns corresponding to the predicted peaks... 
-# ugly text files
-    pred_pk_cols = ['h',
-     'k',
-     'l',
-     'I',
-     'sigma(I)',
-     'peak',
-     'background',
-     'fs/px',
-     'ss/px',
-     'panel']
-# and the columns for found peaks... 
-    known_pk_cols = ['fs/px','ss/px','(1/d)/nm^-1','Intensity' ,'Panel']
-
-#~~~~~~~~~~~~~~~~~~~~~
-
-# pass stream file as an arg.. 
-    prefix = os.path.splitext(stream_file)[0]
-
-# load the stream file contents
-    print("Reading the stream file %s"%stream_file)
-    
-    stream_str = open(stream_file, 'r').read() # stream file
-    
-    stream_dir = os.path.abspath( os.path.dirname(stream_file) )
-
-# ~~~~~~~~~~~~~~~~~~~~~~~
-# parse the geometry section of the stream file
-    s1 = 'Begin geometry file'
-    s2 = 'End geometry file'
-    geom = re.search('Begin geometry(.*)End geometry', stream_str, flags=re.DOTALL).group(1).split('\n')
-
-#~ find all paths that would lead to a dataset... then ensure only one is found because not compatible with multiple paths currently..  
-    found_paths = []
-    for line in geom:
-        if 'data = ' in line:
-            if line[0] == ';':
-                continue
-            found_paths.append( line.split('=')[-1].strip() )
-    assert( len( found_paths) == 1 ) 
-    dataset_path = found_paths[0]
-    print(dataset_path)
-# ~~~~~~~~~~
-
-
-
-
-
-# split the stream file into the patterns( hits) (each diffraction pattern hit is called a chunk in stream file)
-    patts = [ sub_str.split('End chunk')[0] \
-        for sub_str in  stream_str.split('Begin chunk')[1:] ]  
-
-    patts_per_job = np.array_split( patts, n_jobs)
-
-    results = Parallel(n_jobs=n_jobs)(delayed(sub_main)(ppj, jid, stream_dir, dataset_path) for jid, ppj in enumerate( patts_per_job) )
-
-
-    all_known = []
-    all_pred = []
-    all_cell = []
-    for r in results:
-        if r[0]:
-            all_known += r[0]
-        if r[1]:
-            all_pred += r[1]
-
-        if r[2]:
-            all_cell += r[2]
-
-    assert( all_pred and all_known and all_cell)
-
-    print("Combining data 1/3...")
-    all_known = pandas.concat( all_known)
-    print("Combining data 2/3...")
-    all_pred = pandas.concat( all_pred)
-    print("Combining data 3/3...")
-    all_cell = pandas.concat( all_cell)
-
-    print("Saving 1/3... ")
-    all_pred.to_pickle('%s.pred.pkl'%prefix)
-    print("Saving 2/3... ")
-    all_known.to_pickle('%s.known.pkl'%prefix)
-    print("Saving 2/3... ")
-    all_cell.to_pickle('%s.cell.pkl'%prefix)
-
-    print("Saved 3 new pandas.dataframe  pickle files: \n\t%s.pred.pkl \n\t%s.known.pkl \n\t %s.cell.pkl"%(prefix, prefix, prefix))
-
-    return "%s.pred.pkl"%prefix, "%s.known.pkl"%prefix, "%s.cell.pkl"%prefix
 
 if __name__ == '__main__':
     from argparse import ArgumentParser

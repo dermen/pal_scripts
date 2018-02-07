@@ -19,7 +19,8 @@ frpk = {'padx':5, 'pady':5}
 class HistUpdater(tk.Frame):
     '''Illustrate how to drag items on a Tkinter canvas'''
     def __init__(self, parent, data, color='blue', label='label', 
-            max_bins=1000, plot=True, range_slider_len=400, **kwargs):
+            max_bins=1000, plot=True, range_slider_len=400, 
+            minval=None, maxval=None, **kwargs):
        
         tk.Frame.__init__(self, parent,  background='white') #**kwargs)
         
@@ -32,15 +33,22 @@ class HistUpdater(tk.Frame):
         
         self.label = label
         self._set_fig_title()
-
         
         self.dat = data
-        self.minval = self.dat.min()
-        self.maxval = self.dat.max()
-
+        if minval is None:
+            self.minval = self.dat.min()
+            self.dmin = min(self.dat)
+        else:
+            self.minval = minval
+            self.dmin = minval 
+        if maxval is None:
+            self.maxval = self.dat.max()
+            self.dmax = max( self.dat)
+        else:
+            self.maxval = maxval
+            self.dmax = maxval 
+        
         self.Ndat = len(self.dat)
-        self.dmax = max( self.dat)
-        self.dmin = min(self.dat)
 
         self.max_nbin = min(int(self.Ndat*.5), max_bins)
         #self.max_nbin = 1000 #min(int(self.Ndat*.5), max_bins)

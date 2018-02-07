@@ -1,0 +1,33 @@
+#!/usr/bin/python3
+
+import pylab as plt
+import h5py
+import sys
+from find_peaks import make_cxi_file
+import glob
+
+
+run = sys.argv[1]
+run_s = run.zfill(7)
+rundir = "/xfel/ffhs/dat/ue_180124/raw_data/%s/*.h5"%( run_s)
+fnames = glob.glob( rundir )
+print("loading fnames")
+print (fnames)
+
+for f in fnames:
+	print("opening file %s"%f)
+	h5 = h5py.File( f, 'r')
+	keys = list( h5.keys() )[1:]
+	imgs = ( h5[k]['data'].value for k in keys )
+
+	make_cxi_file( imgs, 
+		outname = sys.argv[2],
+		Hsh = (1440,1440),	
+		sig_G=1, 
+		thresh=10, 
+		make_sparse=True,
+		nsigs=3, min_num_pks=10)
+
+
+
+
