@@ -19,16 +19,192 @@ import pylab as plt
 from matplotlib.figure import Figure
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg, NavigationToolbar2TkAgg
 #plt.style.use('dark_background')
-from slide_hist import HistUpdater
+from matplotlib.widgets import RectangleSelector
+
+from new_slide_hist import HistUpdater
+
 
 btnstyle = {'font': 'Helvetica 10 bold', 
             'activebackground': 'green', 'activeforeground': 'white',
             'relief': tk.RAISED, 'highlightcolor':'red'}  # , 'bd':5}
-labstyle = {'font': 'Helvetica 14 bold', 'bg': 'snow', 'fg': 'black',
-            'activebackground': 'green', 'activeforeground': 'white'}
 
-fr = {'bg': 'blue', }
+fr = {'bg': 'white', }
 frpk = {'padx': 5, 'pady': 5}
+
+
+
+
+
+##############
+
+
+
+class Formatter(object):
+    def __init__(self, im):
+        self.im = im
+    def __call__(self, x, y):
+        z = self.im.get_array()[int(y), int(x)]
+        return 'x={:.0f}, y={:.0f}, z={:.01f}'.format(x, y, z)
+
+class ZoomPan:
+    def __init__(self):
+        self.press = None
+        self.cur_xlim = None
+        self.cur_ylim = None
+        self.x0 = None
+        self.y0 = None
+        self.x1 = None
+        self.y1 = None
+        self.xpress = None
+        self.ypress = None
+
+    def zoom_factory(self, ax, base_scale = 2.):
+        def zoom(event):
+            cur_xlim = ax.get_xlim()
+            cur_ylim = ax.get_ylim()
+
+            xdata = event.xdata # get event x location
+            ydata = event.ydata # get event y location
+
+            if event.button == 'down':
+                # deal with zoom in
+                scale_factor = 1 / base_scale
+            elif event.button == 'up':
+                # deal with zoom out
+                scale_factor = base_scale
+            else:
+                # deal with something that should never happen
+                scale_factor = 1
+                print event.button
+
+            new_width = (cur_xlim[1] - cur_xlim[0]) * scale_factor
+            new_height = (cur_ylim[1] - cur_ylim[0]) * scale_factor
+
+            relx = (cur_xlim[1] - xdata)/(cur_xlim[1] - cur_xlim[0])
+            rely = (cur_ylim[1] - ydata)/(cur_ylim[1] - cur_ylim[0])
+
+            ax.set_xlim([xdata - new_width * (1-relx), xdata + new_width * (relx)])
+            ax.set_ylim([ydata - new_height * (1-rely), ydata + new_height * (rely)])
+            ax.figure.canvas.draw()
+
+        fig = ax.get_figure() # get the figure of interest
+        fig.canvas.mpl_connect('scroll_event', zoom)
+
+        return zoom
+
+    def pan_factory(self, ax):
+        def onPress(event):
+            if event.inaxes != ax: return
+            self.cur_xlim = ax.get_xlim()
+            self.cur_ylim = ax.get_ylim()
+            self.press = self.x0, self.y0, event.xdata, event.ydata
+            self.x0, self.y0, self.xpress, self.ypress = self.press
+
+        def onRelease(event):
+            self.press = None
+            ax.figure.canvas.draw()
+
+        def onMotion(event):
+            if self.press is None: return
+            if event.inaxes != ax: return
+            dx = event.xdata - self.xpress
+            dy = event.ydata - self.ypress
+            self.cur_xlim -= dx
+            self.cur_ylim -= dy
+            ax.set_xlim(self.cur_xlim)
+            ax.set_ylim(self.cur_ylim)
+
+            ax.figure.canvas.draw()
+
+        fig = ax.get_figure() # get the figure of interest
+
+        # attach the call back
+        fig.canvas.mpl_connect('button_press_event',onPress)
+        fig.canvas.mpl_connect('button_release_event',onRelease)
+        fig.canvas.mpl_connect('motion_notify_event',onMotion)
+
+        #return the function
+        return onMotion
+
+class ImageViewer(tk.Frame):
+    
+    def __init__(self, master, img_data,  passive=False, *args, **kwargs):
+        tk.Frame.__init__(self, master,  background='white') #*args, **kwargs)
+        self.master = master
+        
+        self.image_frame = tk.Frame( self.master, **fr )
+        self.image_frame.pack( side=tk.TOP)
+        
+        self.slider_frame = tk.Frame(self.master, **fr)
+        self.slider_frame.pack(side=tk.TOP, expand=1, fill=tk.BOTH)
+        self.hist_frame = tk.Frame( self.slider_frame , **fr)
+        self.hist_frame.pack( side=tk.LEFT, expand=tk.YES, fill=tk.BOTH)
+        self.vmin = self.vmax = None
+
+        #load the image
+        self.img = img_data
+        
+        self._create_figure()    
+        self._add_img()
+        self._setup_canvas()
+        self._zoom_im = None
+
+        self._add_hist_updater()
+        self.passive = passive
+        self._update_clim()
+
+    def set_data(self,data):
+        self.ax.images[0].set_data(data)
+
+    def _update_clim(self):
+        self.vmin, self.vmax = self.hist_updater.minval, self.hist_updater.maxval
+        self._im.set_clim( vmin=self.vmin, vmax=self.vmax)
+        self.canvas.draw()
+        self.master.after( 500, self._update_clim )    
+
+    def _add_hist_updater(self):
+        self.hist_updater = HistUpdater( self.hist_frame, self.img.ravel(), label='pixels', plot=False, range_slider_len=800, 
+            background='white')
+        self.hist_updater.pack(side=tk.TOP, fill=tk.BOTH, expand=tk.YES)
+        
+    def _create_figure(self):
+        self.fig = plt.figure()
+        self.ax = self.fig.add_axes([0, 0, 1, 1])
+        
+        #self.ax.set_aspect('equal')
+        self.fig.patch.set_visible(False)
+        self.ax.axis('off')
+    
+    def _add_img(self):
+        self._im = self.ax.imshow(self.img, interpolation='nearest', norm=None, 
+            vmin=self.vmin, vmax=self.vmax, cmap='gnuplot')
+        self.vmin,self.vmax = self._im.get_clim()
+        #self.cbar = plt.colorbar( self._im)
+        self.ax.format_coord = Formatter(self._im)
+
+    def _setup_canvas(self):
+        self.image_frame_left = tk.Frame(self.image_frame, **fr)
+        self.image_frame_left.pack(fill=tk.BOTH, side=tk.LEFT, expand=1)
+        
+        self.image_left_canvas_frame = tk.Frame(self.image_frame_left, **fr)
+        self.image_left_canvas_frame.pack(fill=tk.BOTH, expand=1)
+        
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.image_left_canvas_frame)
+        self.canvas.get_tk_widget().configure(background='white', highlightcolor='white', highlightbackground='white')
+        self.canvas.draw()
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1)
+        
+        self.image_toolbar_fr = tk.Frame(self.image_frame_left, **fr)
+        self.image_toolbar_fr.pack(fill=tk.X, expand=1)
+        self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.image_toolbar_fr)
+        self.toolbar.update()
+        #self.toolbar.get_tk_widget().configure(background='black', highlightcolor='black', highlightbackground='black')
+        self.toolbar.pack(fill=tk.X, expand=1)
+        
+        self.zp = ZoomPan()
+        self.figZoom = self.zp.zoom_factory( self.ax, base_scale=1.1)
+    
+
 
 class ModelApp(tk.Frame):
     def __init__(self, master, cxi_fname, image_path, peaks_path, *args, **kwargs):
@@ -44,39 +220,26 @@ class ModelApp(tk.Frame):
 
         self.npeaks = self.peaks['nPeaks'].value
 
-#       load the dataframes
-        #self.known = pandas.read_pickle(known_pkl)
-        #self.pred = pandas.read_pickle(pred_pkl)
-        #self.cell = pandas.read_pickle(cell_pkl)
-
-#       load the files, put in a dict...
-        #self.unique_fnames = self.cell.cxi_fname.unique()
-        #assert(all(f in self.unique_fnames for f in self.pred.cxi_fname.unique()))
-        #assert(all(f in self.unique_fnames for f in self.known.cxi_fname.unique()))
-        #self.hdf5_handles = {f: h5py.File(f, 'r') for f in self.unique_fnames}
-
-#       load number of shots per fname
-
         #self._setup_image_indexing()
 
         self._set_idx_fname_path()
         #self._set_df()
-        self._set_image()
+        self._set_image(first=True)
         self._set_centers()
 
-#       size of figure inset...
-        self.fig = Figure(figsize=(4, 4), dpi=100)
-        self.ax = self.fig.add_subplot(111)
-        #self.fig, self.ax = plt.subplots(nrows=1,ncols=1)#Figure(figsize=(4, 4))
-        
         self.xl = (None, None)
         self.yl = (None, None)
 
-        self._display_frame()
         self._buttons()
-        # self._color_scaler()
         self._display()
 
+        #self._update_clim()
+    
+    #def _update_clim(self):
+    #    self.vmin, self.vmax = self.IV.hist_updater.minval, self.IV.hist_updater.maxval
+    #    self.ax.images[0].set_clim( vmin=self.vmin, vmax=self.vmax)
+    #    self.fig.canvas.draw()
+    #    self.master.after( 500, self._update_clim )    
 
     def _set_idx_fname_path(self):
         self.idx = self.indices[self.counter]
@@ -84,12 +247,18 @@ class ModelApp(tk.Frame):
         #self.path = self.dset_paths[self.counter]
 
 
-    def _set_image(self):
+    def _set_image(self, first=False):
         dset = self.imgs #self.hdf5_handles[self.fname][self.path]
         #if len(dset.shape) == 2:
             #self.img = dset.value
         #else:
         self.img = dset[self.idx]  # - 1]
+        if first:
+            toplvl= tk.Toplevel(self.master)
+            self.IV = ImageViewer(toplvl, self.img) # passive=True)
+            self.IV.pack( fill=tk.BOTH, expand=1)
+            self.fig = self.IV.fig
+            self.ax = self.IV.ax
 
     def _set_centers(self):
         i = self.indices[ self.counter]
@@ -99,23 +268,13 @@ class ModelApp(tk.Frame):
         self.known_centers = zip( self.Y, self.X)
 
 
-    def _display_frame(self):
-        toplvl= tk.Toplevel(self.master)
-        self.disp_frame = tk.Frame(toplvl)
-        self.disp_frame.pack(side=tk.TOP, expand=1, fill=tk.BOTH, **frpk)
-        self.canvas = FigureCanvasTkAgg(self.fig, master=self.disp_frame)
-        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=1, **frpk)
-        self.toolbar = NavigationToolbar2TkAgg(self.canvas, self.disp_frame)
-        self.toolbar.update()
-        self.canvas._tkcanvas.pack(side=tk.TOP, fill=tk.BOTH, expand=1, **frpk)
-
     def _display(self):
-        self.m = np.median(self.img[self.img > 0])
+        #self.m = np.median(self.img[self.img > 0])
         # np.sqrt( sum( [ (self.m - pix)**2 for pix in self.img[ self.img > 0 ] ]) )
-        self.s = self.img[self.img > 0] .std()
-        self.i_s = 1
-        self.vmin = self.m - self.i_s * self.s
-        self.vmax = self.m + self.i_s * self.s
+        #self.s = self.img[self.img > 0] .std()
+        #self.i_s = 1
+        #self.vmin = self.m - self.i_s * self.s
+        #self.vmax = self.m + self.i_s * self.s
         
         if self.fix_zoom_variable.get() == 1:
             self.xl = self.ax.get_xlim()
@@ -135,13 +294,13 @@ class ModelApp(tk.Frame):
             ("", "", self.idx, self.counter+1, len(
                 self.indices)))
         
-        self.ax.imshow(self.img,
-                       cmap='viridis', interpolation='nearest',
-                       vmin=self.vmin, vmax=self.vmax)
+        #self.ax.imshow(self.img,
+        #               cmap='viridis', interpolation='nearest',
+        #               vmin=self.IV.vmin, vmax=self.IV.vmax)
         self.known_circs = []
         for cent in self.known_centers:
             circ = mpl.patches.Circle(
-                xy=(cent[1], cent[0]), radius=7, ec='r', fc='none', lw=1)
+                xy=(cent[1], cent[0]), radius=7, ec='Deeppink', fc='none', lw=1)
             self.ax.add_patch(circ)
             self.known_circs.append(circ)
             if self.toggle_known_var.get():
@@ -149,24 +308,13 @@ class ModelApp(tk.Frame):
             else:
                 circ.set_visible(False)
 
-        #self.pred_circs = []
-        #for cent in self.pred_centers:
-        #    circ = mpl.patches.Circle(
-        #        xy=(cent[1], cent[0]), radius=7, ec='w', fc='none', lw=1, ls='dashed')
-        #    self.ax.add_patch(circ)
-        #    self.pred_circs.append(circ)
-        #    if self.toggle_pred_var.get():
-        #        circ.set_visible(True)
-        #    else:
-        #        circ.set_visible(False)
-
         self.pred_circ_visible = True
 
         self.ax.set_xlim(self.xl)
         self.ax.set_ylim(self.yl)
         # self.ax.axis('tight')
-        #self.fig.canvas.draw()
-        self.canvas.draw()
+        self.fig.canvas.draw()
+        #self.ax.figure.canvas.draw()
         #plt.pause(0.001)
         #plt.pause(0.001) 
 
@@ -219,27 +367,6 @@ class ModelApp(tk.Frame):
 
 
 
-#       these buttons will be for updating the color map
-        button_frame2 = tk.Frame(self, **fr)
-        button_frame2.pack(side=tk.TOP, **frpk)
-
-        increase = tk.Button(button_frame2,
-                             text='increase contrast',
-                             command=self._increase_contrast, **btnstyle)
-        increase.pack(side=tk.LEFT, expand=tk.NO, **frpk)
-
-        decrease = tk.Button(button_frame2,
-                             text='decrease contrast',
-                             command=self._decrease_contrast, **btnstyle)
-        decrease.pack(side=tk.LEFT, expand=tk.NO, **frpk)
-
-        button_frame3 = tk.Frame(self, **fr)
-        button_frame3.pack(side=tk.TOP, **frpk)
-
-
-
-
-
     def _color_scaler(self):
         scale_frame = tk.Frame(self, **fr)
         scale_frame.pack(side=tk.TOP, **frpk)
@@ -255,7 +382,7 @@ class ModelApp(tk.Frame):
         self.vmin = self.m - self.i_s * self.s
         self.vmax = self.m + self.i_s * self.s
         im.set_clim(self.vmin, self.vmax)
-        self.canvas.draw()
+        self.fig.canvas.draw()
         #nplt.pause(0.001)
 
 
@@ -277,7 +404,7 @@ class ModelApp(tk.Frame):
         known_circ_visible = self.toggle_known_var.get()
         for circ in self.known_circs:
             circ.set_visible(known_circ_visible)
-        self.canvas.draw()
+        self.fig.canvas.draw()
         #plt.pause(0.001)
 
 
@@ -293,36 +420,9 @@ class ModelApp(tk.Frame):
         self.yl = (self.img.shape[0] - 0.5, -0.5)
         self.ax.set_xlim(self.xl)
         self.ax.set_ylim(self.yl)
-        self.canvas.draw()
+        self.fig.canvas.draw()
         #plt.pause(0.001)
 
-    def _decrease_contrast(self):
-        im = self.ax.images[0]
-        if self.i_s < 1:
-            self.i_s = self.i_s * 2
-        else:
-            self.i_s += 1
-        self.vmin = self.m - self.i_s * self.s
-        self.vmax = self.m + self.i_s * self.s
-        im.set_clim(self.vmin, self.vmax)
-        self.canvas.draw()
-        #plt.pause(0.001)
-
-    def _increase_contrast(self):
-        im = self.ax.images[0]
-
-        if self.i_s - 1 <= 0:
-            self.i_s = self.i_s * .5
-        else:
-            self.i_s = self.i_s - 1
-
-        self.vmin = self.m - self.i_s * self.s
-        self.vmax = self.m + self.i_s * self.s
-        im.set_clim(self.vmin, self.vmax)
-        #self.fig.canvas.draw()
-        #plt.pause(0.0001)
-        self.canvas.draw()
-        #plt.pause(0.001)
 
     def _update_display(self):
         #self.idx = self.indices[self.counter]
@@ -330,7 +430,14 @@ class ModelApp(tk.Frame):
         #self._set_df()
         self._set_image()
         self._set_centers()
-        self.ax.clear()
+        #self.ax.clear()
+        self.IV.set_data(self.img)
+        patches = self.ax.patches
+        while patches:
+            _ = patches.pop()
+        #self.IV._im = self.ax.imshow(self.img, aspect='equal', interpolation='nearest', norm=None, 
+        #    vmin=self.IV.vmin, vmax=self.IV.vmax, cmap='gnuplot')
+        self.fig.canvas.draw()
         self._display()
 
 
